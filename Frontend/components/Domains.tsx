@@ -651,7 +651,7 @@ const Domains: React.FC = () => {
         const matchSearch = d.name.toLowerCase().includes(search.toLowerCase());
         const matchStatus = filterStatus === 'All' || d.domainStatus === filterStatus;
         return matchSearch && matchStatus;
-    });
+    }).sort((a, b) => new Date(b.createdOn).getTime() - new Date(a.createdOn).getTime());
 
     const spamCount = domains.filter(d => d.domainStatus === 'Spam').length;
     const inboxCount = domains.filter(d => d.domainStatus === 'Inbox').length;
