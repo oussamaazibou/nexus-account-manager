@@ -18,7 +18,8 @@ const AVAILABLE_PERMISSIONS = [
     'ONLINE_USERS',
     'ARCHIVE_ACCOUNTS',
     'CREATE_USERS',
-    'DOMAINS'
+    'DOMAINS',
+    'MANUAL_OTP'
 ];
 
 interface AppUser {
