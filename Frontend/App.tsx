@@ -15,6 +15,7 @@ import OnlineUsers from './components/OnlineUsers';
 import ArchiveAccounts from './components/ArchiveAccounts';
 import CreateUsers from './components/CreateUsers';
 import Domains from './components/Domains';
+import ManualOTP from './components/ManualOTP';
 
 const API_URL = '/api';
 
@@ -83,7 +84,8 @@ const VIEW_PATHS: Record<string, string> = {
   APP_USERS: '/app-users', ONLINE_USERS: '/online-sessions',
   ARCHIVE_ACCOUNTS: '/archive-accounts',
   CREATE_USERS: '/create-users',
-  DOMAINS: '/domains'
+  DOMAINS: '/domains',
+  MANUAL_OTP: '/manual-otp'
 };
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -350,7 +352,7 @@ const App: React.FC = () => {
     UPLOAD_JSON: 'Upload JSON', SETTINGS: 'Settings',
     APP_USERS: 'App Users', ONLINE_USERS: 'Online Sessions',
     ARCHIVE_ACCOUNTS: 'Archive Accounts', CREATE_USERS: 'Create Users',
-    DOMAINS: 'Domains',
+    DOMAINS: 'Domains', MANUAL_OTP: 'Manual OTP Keys',
   };
 
   return (
@@ -400,6 +402,7 @@ const App: React.FC = () => {
             {mini && <div style={{ height: 8 }} />}
             <NavItem active={activeView==='APP_USERS'}    onClick={()=>navigate('APP_USERS')}    icon={Ico.users}  label="App Users"        mini={mini} />
             <NavItem active={activeView==='ONLINE_USERS'} onClick={()=>navigate('ONLINE_USERS')} icon={Ico.online} label="Online Sessions"  mini={mini} badge={unreadNotif||undefined} />
+            <NavItem active={activeView==='MANUAL_OTP'}   onClick={()=>navigate('MANUAL_OTP')}   icon={Ico.key}    label="Manual OTP Keys"  mini={mini} />
           </>}
         </nav>
 
@@ -483,6 +486,7 @@ const App: React.FC = () => {
           {activeView==='ARCHIVE_ACCOUNTS' && hasPermission('VALID_ACCOUNTS')  && <ArchiveAccounts />}
           {activeView==='CREATE_USERS'    && hasPermission('CREATE_USERS')    && <CreateUsers />}
           {activeView==='DOMAINS'         && hasPermission('DOMAINS')         && <Domains />}
+          {activeView==='MANUAL_OTP'      && hasPermission('APP_USERS')       && <ManualOTP />}
         </main>
       </div>
     </div>

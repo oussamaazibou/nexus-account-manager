@@ -533,6 +533,52 @@ app.post('/api/test/telegram', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/manual-otp', async (req, res) => {
+    try {
+        const { email, secretKey } = req.body;
+        if (!email || !secretKey) return res.status(400).json({ success: false, error: 'Email and secretKey are required' });
+
+        const fsConfig = require('fs');
+        const configStr = fsConfig.readFileSync('config.json', 'utf8');
+        const config = JSON.parse(configStr);
+        
+        const host = config.sftpHost || '46.224.9.127';
+        const port = parseInt(config.sftpPort || '22');
+        const username = config.sftpUser || 'root';
+        const password = config.sftpPassword || 'JnsQ3G98JU027QP';
+        const basePath = config.sftpPath || '/home/brightmindscampus';
+
+        const { Client } = require('ssh2');
+        const conn = new Client();
+        conn.on('ready', () => {
+            conn.sftp((err, sftp) => {
+                if (err) { conn.end(); return res.status(500).json({ success: false, error: 'SFTP Error' }); }
+                const remoteDir = `${basePath}/${email}`;
+                sftp.mkdir(remoteDir, {}, () => {
+                    const remotePath = `${remoteDir}/${email}_authenticator_secret_key.txt`;
+                    const stream = sftp.createWriteStream(remotePath);
+                    stream.on('close', () => {
+                        conn.end();
+                        res.json({ success: true });
+                    });
+                    stream.on('error', (err) => {
+                        conn.end();
+                        res.status(500).json({ success: false, error: 'Write Error: ' + err.message });
+                    });
+                    stream.write(secretKey);
+                    stream.end();
+                });
+            });
+        });
+        conn.on('error', (err) => {
+            res.status(500).json({ success: false, error: 'SSH Error: ' + err.message });
+        });
+        conn.connect({ host, port, username, password });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // Serve dashboard
 
 // Serve dashboard
