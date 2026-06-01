@@ -113,7 +113,14 @@ export class PrepWorker {
     }
 
     private async processJob(data: PrepJobData) {
-        const { projectId, userEmail, userPassword, saName, saDisplayName, mode } = data;
+        let { projectId, userEmail, userPassword, saName, saDisplayName, mode } = data;
+        
+        // Enforce Google Cloud Project ID constraints (max 30 chars, lowercase, alphanumeric, hyphens)
+        projectId = projectId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        if (projectId.length > 30) {
+            projectId = projectId.substring(0, 30).replace(/-$/, '');
+        }
+
         const headless = true; // Force true for VPS environment
         let { orgId } = data;
         const jobId = parseInt(data.jobId || "1");
