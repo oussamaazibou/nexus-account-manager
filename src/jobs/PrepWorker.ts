@@ -228,23 +228,8 @@ export class PrepWorker {
             }
         }
 
-        // Pre-fetch orgId so createProject can use --organization (SA accounts need a parent)
-        if (!orgId) {
-            for (let i = 0; i < 20; i++) {
-                try {
-                    orgId = await gcloud.getOrgId();
-                    if (orgId) {
-                        Logger.info(`✅ Found Organization ID: ${orgId}`);
-                        break;
-                    }
-                } catch (e: any) {
-                    Logger.warn(`⚠️ Organization not visible yet (attempt ${i + 1}/20): ${e.message}`);
-                    if (i < 19) {
-                        await new Promise(r => setTimeout(r, 15000)); // Wait 15s before retry
-                    }
-                }
-            }
-        }
+        // We no longer wait for gcloud organizations list because it's too slow.
+        // We will create the project immediately and fetch the Org ID from its ancestors.
 
         // 1. Project Init
         Logger.info("Step 1: Init Project");
