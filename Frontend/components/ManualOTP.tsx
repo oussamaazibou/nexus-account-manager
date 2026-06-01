@@ -60,8 +60,7 @@ const ManualOTP: React.FC = () => {
             onChange={e => setEmail(e.target.value)}
             placeholder="admin@example.com"
             required
-            className="input"
-            style={{ width: '100%' }}
+            className="w-full px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-blue-500 text-[var(--text-main)] placeholder-[var(--text-muted)]"
             disabled={loading}
           />
         </div>
@@ -76,8 +75,7 @@ const ManualOTP: React.FC = () => {
             onChange={e => setSecretKey(e.target.value)}
             placeholder="JBSWY3DPEHPK3PXP"
             required
-            className="input"
-            style={{ width: '100%', fontFamily: 'monospace' }}
+            className="w-full px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-sm font-mono focus:outline-none focus:border-blue-500 text-[var(--text-main)] placeholder-[var(--text-muted)]"
             disabled={loading}
           />
           <div style={{ fontSize: '11px', color: 'var(--text2)', marginTop: '6px' }}>

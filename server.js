@@ -538,8 +538,7 @@ app.post('/api/manual-otp', async (req, res) => {
         const { email, secretKey } = req.body;
         if (!email || !secretKey) return res.status(400).json({ success: false, error: 'Email and secretKey are required' });
 
-        const fsConfig = require('fs');
-        const configStr = fsConfig.readFileSync('config.json', 'utf8');
+        const configStr = fs.readFileSync('config.json', 'utf8');
         const config = JSON.parse(configStr);
         
         const host = config.sftpHost || '46.224.9.127';
@@ -548,7 +547,6 @@ app.post('/api/manual-otp', async (req, res) => {
         const password = config.sftpPassword || 'JnsQ3G98JU027QP';
         const basePath = config.sftpPath || '/home/brightmindscampus';
 
-        const { Client } = require('ssh2');
         const conn = new Client();
         conn.on('ready', () => {
             conn.sftp((err, sftp) => {
