@@ -397,12 +397,12 @@ const App: React.FC = () => {
           {hasPermission('CREATE_USERS')     && <NavItem active={activeView==='CREATE_USERS'}    onClick={()=>navigate('CREATE_USERS')}    icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>} label="Create Users" mini={mini} />}
           {hasPermission('DOMAINS')          && <NavItem active={activeView==='DOMAINS'}          onClick={()=>navigate('DOMAINS')}          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>} label="Domains" mini={mini} />}
 
-          {hasPermission('APP_USERS') && <>
+          {(hasPermission('APP_USERS') || hasPermission('MANUAL_OTP')) && <>
             {!mini && <div className="nav-section" style={{ marginTop: 8 }}>Administration</div>}
             {mini && <div style={{ height: 8 }} />}
-            <NavItem active={activeView==='APP_USERS'}    onClick={()=>navigate('APP_USERS')}    icon={Ico.users}  label="App Users"        mini={mini} />
-            <NavItem active={activeView==='ONLINE_USERS'} onClick={()=>navigate('ONLINE_USERS')} icon={Ico.online} label="Online Sessions"  mini={mini} badge={unreadNotif||undefined} />
-            <NavItem active={activeView==='MANUAL_OTP'}   onClick={()=>navigate('MANUAL_OTP')}   icon={Ico.key}    label="Manual OTP Keys"  mini={mini} />
+            {hasPermission('APP_USERS') && <NavItem active={activeView==='APP_USERS'}    onClick={()=>navigate('APP_USERS')}    icon={Ico.users}  label="App Users"        mini={mini} />}
+            {hasPermission('APP_USERS') && <NavItem active={activeView==='ONLINE_USERS'} onClick={()=>navigate('ONLINE_USERS')} icon={Ico.online} label="Online Sessions"  mini={mini} badge={unreadNotif||undefined} />}
+            {hasPermission('MANUAL_OTP') && <NavItem active={activeView==='MANUAL_OTP'}   onClick={()=>navigate('MANUAL_OTP')}   icon={Ico.key}    label="Manual OTP Keys"  mini={mini} />}
           </>}
         </nav>
 
@@ -486,7 +486,7 @@ const App: React.FC = () => {
           {activeView==='ARCHIVE_ACCOUNTS' && hasPermission('VALID_ACCOUNTS')  && <ArchiveAccounts />}
           {activeView==='CREATE_USERS'    && hasPermission('CREATE_USERS')    && <CreateUsers />}
           {activeView==='DOMAINS'         && hasPermission('DOMAINS')         && <Domains />}
-          {activeView==='MANUAL_OTP'      && hasPermission('APP_USERS')       && <ManualOTP />}
+          {activeView==='MANUAL_OTP'      && hasPermission('MANUAL_OTP')      && <ManualOTP />}
         </main>
       </div>
     </div>
