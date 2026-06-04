@@ -428,8 +428,8 @@ const CreateUsers: React.FC = () => {
                     <div className="space-y-2">
                         <label className="text-xs font-black uppercase tracking-widest text-[var(--text-muted)] block">Users per Account</label>
                         <input
-                            type="number" min={1} max={100} value={usersPerAccount}
-                            onChange={e => setUsersPerAccount(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))}
+                            type="number" min={1} value={usersPerAccount}
+                            onChange={e => setUsersPerAccount(Math.max(1, parseInt(e.target.value) || 1))}
                             className="w-full px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)]"
                         />
                     </div>
