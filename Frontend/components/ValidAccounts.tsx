@@ -82,6 +82,8 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
   const [phoneVerifyingIds, setPhoneVerifyingIds] = useState<Set<string>>(new Set());
   const [phoneVerifyResults, setPhoneVerifyResults] = useState<Record<string, 'queued' | 'error'>>();
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addAccountData, setAddAccountData] = useState({ email: '', password: '', collection: '' });
 
   /* Reset pagination when filter/data changes */
   React.useEffect(() => {
@@ -587,6 +589,40 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
     }
   };
 
+  const handleAddManualAccount = async () => {
+    if (!addAccountData.email.includes('@') || !addAccountData.password) {
+      toast('Valid email and password are required', 'err');
+      return;
+    }
+    
+    try {
+      const res = await fetch('/api/accounts/upload-results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accounts: [{ email: addAccountData.email, password: addAccountData.password }] })
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast(`Account ${addAccountData.email} added manually`, 'ok');
+        
+        if (addAccountData.collection) {
+          await fetch(`${API_URL}/accounts/bulk_update`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emails: [addAccountData.email], collection: addAccountData.collection })
+          });
+        }
+        
+        setShowAddModal(false);
+        setAddAccountData({ email: '', password: '', collection: '' });
+      } else {
+        toast('Upload failed: ' + data.error, 'err');
+      }
+    } catch (err: any) {
+      toast('Error: ' + err.message, 'err');
+    }
+  };
+
   return (
     <div className="space-y-8 md:space-y-12 animate-in fade-in duration-700 relative pb-24">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -599,6 +635,16 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
         </div>
 
         <div className="flex flex-row items-center gap-3 overflow-x-auto pb-2 no-scrollbar max-w-full">
+          {/* Add Manual Account */}
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="glass-card px-4 py-2.5 flex items-center gap-2 hover:bg-blue-500/10 transition-colors text-blue-400 shrink-0"
+            title="Add Account Manually"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span className="text-xs font-black uppercase tracking-widest hidden sm:inline">Add Manual</span>
+          </button>
+
           {/* Upload TXT to Results */}
           <label className={`glass-card px-4 py-2.5 flex items-center gap-2 hover:bg-emerald-500/10 transition-colors cursor-pointer ${uploadingFile ? 'opacity-50 pointer-events-none' : 'text-emerald-400'}`} title="Upload verified accounts (email:password)">
             <input type="file" accept=".txt" className="hidden" onChange={handleFileUpload} />
@@ -1103,6 +1149,63 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
           to { width: 0%; }
         }
       `}</style>
+
+      {/* Add Manual Account Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-[#0f172a] rounded-2xl p-6 w-full max-w-md border border-white/10 shadow-2xl relative">
+            <h3 className="text-xl font-black text-white mb-6 uppercase tracking-wider">Add Manual Account</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5 block">Email Address</label>
+                <input
+                  type="email"
+                  value={addAccountData.email}
+                  onChange={e => setAddAccountData({ ...addAccountData, email: e.target.value })}
+                  placeholder="admin@domain.com"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5 block">Password</label>
+                <input
+                  type="text"
+                  value={addAccountData.password}
+                  onChange={e => setAddAccountData({ ...addAccountData, password: e.target.value })}
+                  placeholder="Account password"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest mb-1.5 block">Collection (Optional)</label>
+                <input
+                  type="text"
+                  value={addAccountData.collection}
+                  onChange={e => setAddAccountData({ ...addAccountData, collection: e.target.value })}
+                  placeholder="e.g. Batch_1"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-8">
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="flex-1 px-4 py-3 rounded-xl font-bold text-sm text-white/70 hover:bg-white/5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddManualAccount}
+                className="flex-1 px-4 py-3 rounded-xl font-bold text-sm bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+              >
+                Add Account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 };
