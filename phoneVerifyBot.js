@@ -108,9 +108,14 @@ export async function doGoogleLogin(browser, email, password) {
 
     // Also check page text for account-not-found indicators (some Google flows show it without error element)
     const pageText = await page.evaluate(() => document.body.innerText.toLowerCase()).catch(() => '');
+    if (pageText.includes("enter the text you hear or see") || pageText.includes("prove you're not a robot")) {
+        throw new Error('CAPTCHA_BLOCKED');
+    }
+
     if (pageText.includes("couldn't find your google account") ||
         pageText.includes("could not find your google account") ||
         pageText.includes("no google account found") ||
+        pageText.includes("enter a valid email") ||
         pageText.includes("this account was recently deleted")) {
         throw new Error('ACCOUNT_NOT_FOUND');
     }
