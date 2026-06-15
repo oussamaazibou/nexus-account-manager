@@ -51,7 +51,7 @@ async function addDomainWideDelegation(email, password, serviceAccountEmail, bro
 
         // Check if login is required
         try {
-            const emailInput = await page.waitForSelector('input[type="email"]', { visible: true, timeout: 5000 }).catch(() => null);
+            const emailInput = await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { visible: true, timeout: 5000 }).catch(() => null);
 
             if (emailInput) {
                 console.log('[DWD] Login required. Entering credentials...');

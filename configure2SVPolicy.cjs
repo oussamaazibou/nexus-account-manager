@@ -48,7 +48,7 @@ async function configure2SVPolicy(adminEmail, adminPassword, browser = null) {
 
         // 2. CHECK IF LOGIN IS NEEDED
         const isLoginPage = await page.evaluate(() => {
-            return !!document.querySelector('input[type="email"]') || !!document.querySelector('input[type="password"]');
+            return !!document.querySelector('input[type="email"]') || !!document.querySelector('input[name="identifier"]') || !!document.querySelector('#identifierId') || !!document.querySelector('input[type="password"]');
         });
 
         if (isLoginPage) {
@@ -74,10 +74,11 @@ async function configure2SVPolicy(adminEmail, adminPassword, browser = null) {
             } catch (e) { }
 
             // Email Logic
-            const emailInput = await page.$('input[type="email"]');
+            const emailInput = await page.$('input[type="email"], input[name="identifier"], #identifierId');
             if (emailInput) {
-                await page.type('input[type="email"]', adminEmail);
-                await page.click('#identifierNext');
+                await emailInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
+                await emailInput.type(adminEmail);
+                await page.keyboard.press('Enter');
                 await new Promise(r => setTimeout(r, 2000));
             }
 

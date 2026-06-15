@@ -98,7 +98,8 @@ async function loginWithAutoOTP(page, email, password, targetUrl = null) {
 
         // 1. Enter Email
         console.log('[Auto-Login] Entering email...');
-        const emailInput = await page.waitForSelector('input[type="email"]', { timeout: 10000 });
+        const emailInput = await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { timeout: 10000 });
+        await emailInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
         await emailInput.type(email);
         await page.keyboard.press('Enter');
         await new Promise(r => setTimeout(r, 2000));

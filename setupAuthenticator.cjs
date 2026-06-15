@@ -50,10 +50,11 @@ async function setupAuthenticator(email, password, browser = null) {
 
         // 2. Check if already logged in, if not, login
         try {
-            await page.waitForSelector('input[type="email"]', { timeout: 3000 });
+            const emailInput = await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { timeout: 3000 });
             console.log('[2FA] Logging in...');
-            await page.type('input[type="email"]', email);
-            await page.click('#identifierNext');
+            await emailInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
+            await emailInput.type(email);
+            await page.keyboard.press('Enter');
             await new Promise(r => setTimeout(r, 2000));
 
             await page.waitForSelector('input[type="password"]', { timeout: 10000 });
