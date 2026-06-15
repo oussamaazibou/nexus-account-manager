@@ -4289,6 +4289,9 @@ app.post('/api/phone-verify/start', async (req, res) => {
     if (existing?.browser) await existing.browser.close().catch(() => {});
     phoneVerifySessions.delete(email);
 
+    // Immediately mark as verifying so frontend doesn't re-queue it
+    updatePhoneMeta(email, { status: 'verifying' });
+
     const { apiKey, baseUrl } = getHeroConfig();
     if (!apiKey) return res.status(400).json({ error: 'Hero SMS API key not configured in Settings' });
 

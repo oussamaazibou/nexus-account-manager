@@ -285,7 +285,42 @@ export async function retryWithNewPhone(page, newPhone) {
     await input.type(fullPhone, { delay: TYPE_DELAY });
     await sleep(400);
     await clickNext(page);
-    await sleep(2000);
+    
+    // Wait for either the code input to appear OR an error text to show up
+    try {
+        await page.waitForFunction(() => {
+            const codeInput = document.querySelector('#code, input[name="code"], #idvPin, input[maxlength="6"], input[aria-label*="code" i]');
+            if (codeInput && codeInput.offsetParent !== null) return 'SUCCESS';
+            
+            const bodyText = document.body.innerText.toLowerCase();
+            const hasError = bodyText.includes('phone number has already been used') ||
+                             bodyText.includes('cannot be used for verification') ||
+                             bodyText.includes('invalid phone number') ||
+                             bodyText.includes('something went wrong');
+            if (hasError) return 'REJECTED';
+            
+            return false;
+        }, { timeout: 8000 });
+        
+        const isRejected = await page.evaluate(() => {
+            const bodyText = document.body.innerText.toLowerCase();
+            return bodyText.includes('phone number has already been used') ||
+                   bodyText.includes('cannot be used for verification') ||
+                   bodyText.includes('invalid phone number') ||
+                   bodyText.includes('something went wrong');
+        });
+        
+        if (isRejected) {
+            throw new Error('PHONE_REJECTED');
+        }
+        
+        await screenshot(page, 'after_retry_phone_entry');
+        console.log(`[PhoneBot] Retry Phone entered (${fullPhone}) and accepted. URL: ${page.url()}`);
+    } catch (e) {
+        console.log(`[PhoneBot] Retry Rejection or timeout detected. Error: ${e.message}`);
+        throw new Error('PHONE_REJECTED');
+    }
+    
     return { success: true };
 }
 
