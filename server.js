@@ -3653,18 +3653,6 @@ app.post('/api/manage/create-users-random', async (req, res) => {
         const failed = [];
         const usedUsernames = new Set();
 
-        const generateRandomPassword = (length = 12) => {
-            const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-            const lower = 'abcdefghijklmnopqrstuvwxyz';
-            const numbers = '0123456789';
-            const allChars = upper + lower + numbers;
-            let password = '';
-            for (let j = 0; j < length; j++) {
-                password += allChars[Math.floor(Math.random() * allChars.length)];
-            }
-            return password;
-        };
-
         for (let i = 0; i < count; i++) {
             const fn = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)];
             const ln = LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)];
@@ -3678,7 +3666,7 @@ app.post('/api/manage/create-users-random', async (req, res) => {
             }
             usedUsernames.add(username);
             const primaryEmail = `${username}@${domain}`;
-            const password = generateRandomPassword();
+            const password = adminPassword || 'ChangeMe@2025!';
 
             try {
                 await admin.users.insert({
@@ -4252,13 +4240,34 @@ app.post('/api/accounts/verify-phone/bulk', (req, res) => {
         const existing = new Set();
         if (fs.existsSync(PHONE_VERIFY_FILE))
             fs.readFileSync(PHONE_VERIFY_FILE, 'utf8').split('\n').filter(l => l.includes('@')).forEach(l => existing.add(l.split(':')[0].trim()));
+        
+        // Build domain to password map from result_accounts.txt
+        const domainToPassword = new Map();
+        try {
+            const resultPath = path.join(__dirname, 'result_accounts.txt');
+            if (fs.existsSync(resultPath)) {
+                fs.readFileSync(resultPath, 'utf8').split('\n').forEach(line => {
+                    const parts = line.split(':');
+                    if (parts.length >= 2 && parts[0].includes('@')) {
+                        const domain = parts[0].split('@')[1].trim();
+                        domainToPassword.set(domain, parts[1].trim());
+                    }
+                });
+            }
+        } catch(e) {}
+
         const meta = fs.existsSync(PHONE_VERIFY_META) ? JSON.parse(fs.readFileSync(PHONE_VERIFY_META, 'utf8')) : {};
         let queued = 0, skipped = 0;
         const newLines = [];
         for (const a of accounts) {
-            if (!a.email || !a.password) continue;
+            let pwd = a.password;
+            if (!pwd || pwd.trim() === '') {
+                const domain = a.email.split('@')[1];
+                if (domain) pwd = domainToPassword.get(domain);
+            }
+            if (!a.email || !pwd) continue;
             if (existing.has(a.email)) { skipped++; continue; }
-            newLines.push(`${a.email}:${a.password}`);
+            newLines.push(`${a.email}:${pwd}`);
             const username = a.verifiedBy || verifiedBy || 'ALL';
             meta[a.email] = { id: `pv-${Date.now()}-${a.email}`, status: 'queued', addedAt: new Date().toISOString(), verifiedBy: username };
             queued++;

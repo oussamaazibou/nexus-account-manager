@@ -375,13 +375,16 @@ const PhoneVerifyAccounts: React.FC = () => {
             const text = await file.text();
             const parsed = text.split('\n')
                 .map(l => l.trim())
-                .filter(l => l.includes(':') && l.includes('@'))
+                .filter(l => l.includes('@'))
                 .map(line => {
                     const idx = line.indexOf(':');
-                    return { email: line.substring(0, idx).trim(), password: line.substring(idx + 1).trim() };
+                    if (idx > -1) {
+                        return { email: line.substring(0, idx).trim(), password: line.substring(idx + 1).trim() };
+                    }
+                    return { email: line, password: '' };
                 })
-                .filter(a => a.email && a.password);
-            if (parsed.length === 0) { toast('No valid accounts. Format: email:password', 'err'); setUploading(false); return; }
+                .filter(a => a.email);
+            if (parsed.length === 0) { toast('No valid accounts found.', 'err'); setUploading(false); return; }
             setUploadProgress({ done: 0, total: parsed.length });
             const session = localStorage.getItem('nexus_session');
             const me = session ? JSON.parse(session) : null;
