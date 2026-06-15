@@ -115,9 +115,16 @@ async function gcloudAuthLogin(email, password, tilingId = 1, configDir = null, 
         }
 
         try {
-            const emailInput = await page.waitForSelector('input[type="email"]', { visible: true, timeout: 5000 });
-            if (emailInput) { await page.type('input[type="email"]', email); await page.click('#identifierNext'); await new Promise(r => setTimeout(r, 2000)); }
-        } catch (e) {}
+            const emailInput = await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { visible: true, timeout: 15000 });
+            if (emailInput) { 
+                await emailInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
+                await emailInput.type(email); 
+                await page.keyboard.press('Enter');
+                await new Promise(r => setTimeout(r, 4000)); 
+            }
+        } catch (e) {
+            console.warn('[gcloud Auth] Could not find email input or already passed:', e.message);
+        }
 
         let captchaAttempts = 0, isCaptchaResolved = false;
         while (!isCaptchaResolved && captchaAttempts < 3) {
