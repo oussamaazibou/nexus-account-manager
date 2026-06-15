@@ -318,15 +318,33 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
   const verifyPhone = async (acc: Account) => {
     setPhoneVerifyingIds(prev => new Set(prev).add(acc.id));
     try {
-      const res = await fetch('/api/accounts/verify-phone', {
+      const session = localStorage.getItem('nexus_session');
+      const me = session ? JSON.parse(session) : null;
+      
+      const res = await fetch('/api/accounts/verify-phone/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: acc.email, password: acc.password })
+        body: JSON.stringify({ 
+          accounts: [{ email: acc.email, password: acc.password }],
+          verifiedBy: me?.username || 'admin'
+        })
       });
       const data = await res.json();
       if (data.success) {
         setPhoneVerifyResults(prev => ({ ...prev, [acc.id]: 'queued' }));
-        setTimeout(() => setPhoneVerifyResults(prev => { const n = { ...prev }; delete n[acc.id]; return n; }), 5000);
+        
+        // Auto-add to verify list for the next UI
+        const existing = JSON.parse(localStorage.getItem('nexus_auto_verify_emails') || '[]');
+        if (!existing.includes(acc.email)) existing.push(acc.email);
+        localStorage.setItem('nexus_auto_verify_emails', JSON.stringify(existing));
+        
+        toast('Added to Phone Verify Queue! Opening Verify Phone tab...', 'ok');
+        
+        setTimeout(() => {
+          if (onNavigate) {
+            onNavigate('PHONE_VERIFY');
+          }
+        }, 800);
       } else {
         setPhoneVerifyResults(prev => ({ ...prev, [acc.id]: 'error' }));
         setTimeout(() => setPhoneVerifyResults(prev => { const n = { ...prev }; delete n[acc.id]; return n; }), 3000);
