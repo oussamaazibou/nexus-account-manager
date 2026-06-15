@@ -311,8 +311,13 @@ export class AccountVerifier {
             Logger.info(`📱 [phoneVerifyOnly] Navigating to Google sign-in...`);
             await page.goto('https://accounts.google.com/signin/v2/identifier?hl=en&flowName=GlifWebSignIn&flowEntry=ServiceLogin', { waitUntil: 'networkidle2' });
 
-            await page.waitForSelector('input[type="email"]');
-            await this.humanLikeType(await page.$('input[type="email"]'), email);
+            await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { visible: true, timeout: 30000 });
+            const emailInput = await page.$('input[type="email"], input[name="identifier"], #identifierId');
+            if (emailInput) {
+                await this.humanLikeType(emailInput, email);
+            } else {
+                throw new Error('Email input not found');
+            }
             await page.keyboard.press('Enter');
             
             // ── WAIT FOR RESPONSE: Password, Error, or Captcha ──
@@ -644,8 +649,13 @@ export class AccountVerifier {
 
             // Email
             Logger.info(`✍️ Entering email for ${email}...`);
-            await page.waitForSelector('input[type="email"]');
-            await this.humanLikeType(await page.$('input[type="email"]'), email);
+            await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { visible: true, timeout: 30000 });
+            const emailInput = await page.$('input[type="email"], input[name="identifier"], #identifierId');
+            if (emailInput) {
+                await this.humanLikeType(emailInput, email);
+            } else {
+                throw new Error('Email input not found');
+            }
             await page.keyboard.press('Enter');
  
             // ── WAIT FOR RESPONSE: Password, Error, or Captcha ──
