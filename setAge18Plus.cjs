@@ -35,11 +35,13 @@ async function setAge18Plus(email, password, headless = true) {
         await new Promise(r => setTimeout(r, 2000));
 
         // Step 2: Login if needed
-        const emailInput = await page.$('input[type="email"]');
+        // Step 2: Login if needed
+        const emailInput = await page.$('input[type="email"], input[name="identifier"], #identifierId');
         if (emailInput) {
             console.log('[Age18+] Logging in...');
-            await page.type('input[type="email"]', email, { delay: 60 });
-            await page.click('#identifierNext');
+            await emailInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
+            await emailInput.type(email, { delay: 60 });
+            await page.keyboard.press('Enter');
             await new Promise(r => setTimeout(r, 2500));
 
             await page.waitForSelector('input[type="password"]', { visible: true, timeout: 15000 });
@@ -64,12 +66,12 @@ async function setAge18Plus(email, password, headless = true) {
 
             if (isOnGoogleAuth(url)) {
                 // If back on EMAIL INPUT page — re-do login
-                const onEmailInput = await page.$('input[type="email"]').catch(() => null);
+                const onEmailInput = await page.$('input[type="email"], input[name="identifier"], #identifierId').catch(() => null);
                 if (onEmailInput) {
                     console.log('[Age18+] On email login page — re-logging in...');
                     await page.evaluate(el => el.value = '', onEmailInput);
-                    await page.type('input[type="email"]', email, { delay: 60 });
-                    await page.click('#identifierNext');
+                    await onEmailInput.type(email, { delay: 60 });
+                    await page.keyboard.press('Enter');
                     await new Promise(r => setTimeout(r, 2500));
                     const pwInput = await page.waitForSelector('input[type="password"]', { visible: true, timeout: 10000 }).catch(() => null);
                     if (pwInput) {

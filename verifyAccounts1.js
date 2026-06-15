@@ -299,8 +299,10 @@ async function verifyAccount(email, password) {
 
         // LOGIN - EMAIL
         console.log(`✍️  Entering email...`);
-        await page.waitForSelector('input[type="email"]');
-        await humanLikeType(await page.$('input[type="email"]'), email);
+        await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId');
+        const emailInput = await page.$('input[type="email"], input[name="identifier"], #identifierId');
+        await emailInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
+        await humanLikeType(emailInput, email);
         await page.keyboard.press('Enter');
 
         // WAIT FOR PASSWORD OR CAPTCHA

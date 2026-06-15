@@ -13,8 +13,8 @@ async function loginToGoogle(page, email, password) {
     await new Promise(r => setTimeout(r, 2000));
 
     // --- STEP 1: EMAIL ---
-    const emailInput = await page.waitForSelector('input[type="email"]', { timeout: 15000 });
-    await emailInput.click({ clickCount: 3 }); // Select all first
+    const emailInput = await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { timeout: 15000 });
+    await emailInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
     await emailInput.type(email, { delay: 80 });
     console.log('[App Password] Email typed: ' + email);
     await new Promise(r => setTimeout(r, 1000));

@@ -68,8 +68,8 @@ export async function doGoogleLogin(browser, email, password) {
     await sleep(1000);
 
     // Enter email
-    const emailEl = await page.waitForSelector('input[type="email"]', { timeout: TIMEOUT });
-    await emailEl.click({ clickCount: 3 });
+    const emailEl = await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { timeout: TIMEOUT });
+    await emailEl.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
     await emailEl.type(email, { delay: TYPE_DELAY });
     await sleep(200);
     await clickNext(page);

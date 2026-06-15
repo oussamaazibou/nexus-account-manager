@@ -110,10 +110,11 @@ export class AccountVerifier {
             await page.setUserAgent(userAgent.toString());
             await page.goto('https://accounts.google.com/signin/v2/identifier?hl=en&flowName=GlifWebSignIn&flowEntry=ServiceLogin', { waitUntil: 'networkidle2' });
 
-            await page.waitForSelector('input[type="email"]');
+            await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId');
             
             // Speed optimization: Use direct typing for existence check (no jitter needed for simple existence check)
-            const emailInput = await page.$('input[type="email"]');
+            const emailInput = await page.$('input[type="email"], input[name="identifier"], #identifierId');
+            await emailInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
             await emailInput.type(email, { delay: 10 }); 
             await page.keyboard.press('Enter');
 
