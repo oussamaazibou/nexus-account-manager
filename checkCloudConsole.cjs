@@ -32,11 +32,12 @@ async function checkAndActivateCloudConsole(email, password, headless = false) {
         await page.goto('https://console.cloud.google.com/projectcreate?hl=en', { waitUntil: 'networkidle2' });
 
         // Login if needed
-        const emailInput = await page.$('input[type="email"]');
+        const emailInput = await page.$('input[type="email"], input[name="identifier"], #identifierId');
         if (emailInput) {
-            await page.type('input[type="email"]', email);
-            await page.click('#identifierNext');
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await emailInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
+            await emailInput.type(email);
+            await page.keyboard.press('Enter');
+            await new Promise(resolve => setTimeout(resolve, 3000));
 
             // Load Config for Captcha Key
             const fs = require('fs');
