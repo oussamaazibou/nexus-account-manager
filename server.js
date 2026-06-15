@@ -11,7 +11,7 @@ const { Client } = pkg;
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { deleteFileOrFolder } from './dist/utils/fileOps.js';
+
 import { checkStatus } from './checkStatusBot.js';
 import { SSHUploader } from './dist/services/ssh/SSHUploader.js';
 import * as AVModule from './dist/services/verification/AccountVerifier.js';
