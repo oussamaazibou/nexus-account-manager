@@ -3653,6 +3653,18 @@ app.post('/api/manage/create-users-random', async (req, res) => {
         const failed = [];
         const usedUsernames = new Set();
 
+        const generateRandomPassword = (length = 12) => {
+            const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            const lower = 'abcdefghijklmnopqrstuvwxyz';
+            const numbers = '0123456789';
+            const allChars = upper + lower + numbers;
+            let password = '';
+            for (let j = 0; j < length; j++) {
+                password += allChars[Math.floor(Math.random() * allChars.length)];
+            }
+            return password;
+        };
+
         for (let i = 0; i < count; i++) {
             const fn = FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)];
             const ln = LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)];
@@ -3666,7 +3678,7 @@ app.post('/api/manage/create-users-random', async (req, res) => {
             }
             usedUsernames.add(username);
             const primaryEmail = `${username}@${domain}`;
-            const password = adminPassword || 'ChangeMe@2025!';
+            const password = generateRandomPassword();
 
             try {
                 await admin.users.insert({

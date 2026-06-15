@@ -314,7 +314,7 @@ async function findInput(page, selectors) {
 
 async function clickNext(page) {
     const selectors = [
-        '#identifierNext', '#passwordNext', '#sendVerificationCode',
+        '#identifierNext button', '#passwordNext button', '#sendVerificationCode button',
         '#next', 'button[data-action="next"]', '[jsname="LgbsSe"]',
         'button[type="submit"]',
     ];
