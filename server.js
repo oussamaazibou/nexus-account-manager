@@ -4308,19 +4308,27 @@ app.post('/api/phone-verify/start', async (req, res) => {
         // Step 4: Enter phone in Google
         try {
             await bot.enterPhoneNumber(page, sms.phone);
+            
+            // Store session
+            phoneVerifySessions.set(email, { browser, page, attempt: 1, activationId: sms.activationId, phone: sms.phone, apiKey, baseUrl, country });
+            updatePhoneMeta(email, { status: 'verifying', activationId: sms.activationId, phone: sms.phone });
+
+            console.log(`[PhoneVerify] ✅ Number entered for ${email}: ${sms.phone} (attempt 1)`);
+            res.json({ success: true, activationId: sms.activationId, phone: sms.phone, attempt: 1 });
+            
         } catch (phoneErr) {
             await heroCancelNumber(apiKey, baseUrl, sms.activationId);
-            await browser.close().catch(() => {});
-            updatePhoneMeta(email, { status: 'failed' });
-            return res.json({ success: false, error: `Phone entry: ${phoneErr.message}` });
+            if (phoneErr.message === 'PHONE_REJECTED') {
+                // Keep browser open for retry
+                phoneVerifySessions.set(email, { browser, page, attempt: 1, activationId: sms.activationId, phone: sms.phone, apiKey, baseUrl, country });
+                updatePhoneMeta(email, { status: 'verifying' });
+                return res.json({ success: true, phoneRejected: true, error: `Phone rejected` });
+            } else {
+                await browser.close().catch(() => {});
+                updatePhoneMeta(email, { status: 'failed' });
+                return res.json({ success: false, error: `Phone entry: ${phoneErr.message}` });
+            }
         }
-
-        // Store session
-        phoneVerifySessions.set(email, { browser, page, attempt: 1, activationId: sms.activationId, phone: sms.phone, apiKey, baseUrl, country });
-        updatePhoneMeta(email, { status: 'verifying', activationId: sms.activationId, phone: sms.phone });
-
-        console.log(`[PhoneVerify] ✅ Number entered for ${email}: ${sms.phone} (attempt 1)`);
-        res.json({ success: true, activationId: sms.activationId, phone: sms.phone, attempt: 1 });
 
     } catch (e) {
         console.error(`[PhoneVerify] start error for ${email}:`, e.message);

@@ -192,6 +192,20 @@ export async function enterPhoneNumber(page, phone) {
 
     await screenshot(page, 'after_phone_entry');
     console.log(`[PhoneBot] Phone entered (${fullPhone}). URL: ${page.url()}`);
+    
+    // Check if Google rejected the number
+    const errorExists = await page.evaluate(() => {
+        const bodyText = document.body.innerText.toLowerCase();
+        return bodyText.includes('phone number has already been used too many times') ||
+               bodyText.includes('cannot be used for verification') ||
+               bodyText.includes('invalid phone number') ||
+               bodyText.includes('something went wrong');
+    });
+
+    if (errorExists) {
+        throw new Error('PHONE_REJECTED');
+    }
+    
     return { success: true };
 }
 

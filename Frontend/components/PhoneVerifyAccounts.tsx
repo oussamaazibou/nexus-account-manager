@@ -130,8 +130,10 @@ const PhoneVerifyAccounts: React.FC = () => {
         let activationId = '';
         let phone = '';
         let attempt = 1;
+        let phoneRejected = false;
 
         // Call start: Login Gmail + get Hero SMS number + enter it in Google
+        let startSuccess = false;
         try {
             const res = await fetch(`${API_URL}/phone-verify/start`, {
                 method: 'POST',
@@ -151,9 +153,15 @@ const PhoneVerifyAccounts: React.FC = () => {
                 toast(`✅ ${acc.email} logged in directly!`, 'ok');
                 return true;
             }
-            activationId = data.activationId;
-            phone = data.phone;
+            
+            if (data.phoneRejected) {
+                phoneRejected = true;
+            } else {
+                activationId = data.activationId;
+                phone = data.phone;
+            }
             attempt = data.attempt || 1;
+            startSuccess = true;
         } catch (e: any) {
             setSlot(acc.id, 0, { error: 'Connection error: ' + e.message });
             return false;
@@ -161,45 +169,75 @@ const PhoneVerifyAccounts: React.FC = () => {
 
         setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, status: 'verifying' } : a));
 
-        // ── Direct verification: Gmail login → Hero SMS (1 attempt only) ───────────
         const POLL_INTERVAL = 5000;
         const MAX_POLLS = 18; // 18 × 5s = 90s
-
-        // Step 4 – Waiting for SMS code
-        setSlot(acc.id, 4, { phone, activationId, attempt: 1 });
+        const MAX_PHONE_ATTEMPTS = 3;
 
         let codeReceived = false;
 
-        await new Promise<void>((resolve) => {
-            let polls = 0;
-            pollRefs.current[acc.id] = setInterval(async () => {
-                polls++;
-                if (polls > MAX_POLLS) {
-                    stopPoll(acc.id); resolve(); return;
-                }
-                try {
-                    const r = await fetch(`${API_URL}/phone-verify/code?activationId=${activationId}&email=${encodeURIComponent(acc.email)}`);
-                    const d = await r.json();
-                    if (d.status === 'received' && d.code) {
-                        stopPoll(acc.id);
-                        // Step 5 – Entering code in browser
-                        setSlot(acc.id, 5, { phone, activationId, code: d.code, attempt: 1 });
-                        setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, status: 'done' } : a));
-                        toast(`✅ ${acc.email} → SMS: ${d.code}`, 'ok');
-                        codeReceived = true; resolve();
-                    } else if (d.status === 'cancelled') {
-                        stopPoll(acc.id); resolve();
-                    }
-                } catch { /* keep polling */ }
-            }, POLL_INTERVAL);
-        });
+        // Loop up to 3 attempts
+        while (attempt <= MAX_PHONE_ATTEMPTS && !codeReceived) {
+            if (!phoneRejected) {
+                setSlot(acc.id, 4, { phone, activationId, attempt });
 
-        if (codeReceived) return true; // ✅ Done
+                await new Promise<void>((resolve) => {
+                    let polls = 0;
+                    pollRefs.current[acc.id] = setInterval(async () => {
+                        polls++;
+                        if (polls > MAX_POLLS) {
+                            stopPoll(acc.id); resolve(); return;
+                        }
+                        try {
+                            const r = await fetch(`${API_URL}/phone-verify/code?activationId=${activationId}&email=${encodeURIComponent(acc.email)}`);
+                            const d = await r.json();
+                            if (d.status === 'received' && d.code) {
+                                stopPoll(acc.id);
+                                // Step 5 – Entering code in browser
+                                setSlot(acc.id, 5, { phone, activationId, code: d.code, attempt });
+                                setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, status: 'done' } : a));
+                                toast(`✅ ${acc.email} → SMS: ${d.code}`, 'ok');
+                                codeReceived = true; resolve();
+                            } else if (d.status === 'cancelled') {
+                                stopPoll(acc.id); resolve();
+                            }
+                        } catch { /* keep polling */ }
+                    }, POLL_INTERVAL);
+                });
+
+                if (codeReceived) return true;
+            }
+
+            if (attempt < MAX_PHONE_ATTEMPTS) {
+                // Wait before retrying
+                await new Promise(r => setTimeout(r, 2000));
+                try {
+                    const retryRes = await fetch(`${API_URL}/phone-verify/retry-number`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: acc.email, oldActivationId: activationId })
+                    });
+                    const retryData = await retryRes.json();
+                    if (!retryData.success) {
+                        // Retry failed (e.g., max attempts reached or hero error)
+                        break;
+                    }
+                    activationId = retryData.activationId;
+                    phone = retryData.phone;
+                    attempt = retryData.attempt;
+                    phoneRejected = false; // Reset for next loop
+                } catch (e) {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        if (codeReceived) return true;
 
         // Failed or Timed out
-        setSlot(acc.id, 0, { phone, activationId, error: `Failed: No SMS code received in ${MAX_POLLS * POLL_INTERVAL / 1000}s` });
+        setSlot(acc.id, 0, { phone, activationId, error: `Failed: No SMS code received after ${MAX_PHONE_ATTEMPTS} attempts` });
         setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, status: 'failed' } : a));
-        // Close browser session & force backend status to failed
         fetch(`${API_URL}/phone-verify/close-session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: acc.email, status: 'failed' }) }).catch(() => {});
         return false;
     }, [geoMap]);
