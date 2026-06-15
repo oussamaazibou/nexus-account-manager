@@ -188,21 +188,41 @@ export async function enterPhoneNumber(page, phone) {
     await sleep(300); // Reduced from 600
     await screenshot(page, 'phone_typed');
     await clickNext(page);
-    await sleep(1000); // Reduced from 3000
-
-    await screenshot(page, 'after_phone_entry');
-    console.log(`[PhoneBot] Phone entered (${fullPhone}). URL: ${page.url()}`);
     
-    // Check if Google rejected the number
-    const errorExists = await page.evaluate(() => {
-        const bodyText = document.body.innerText.toLowerCase();
-        return bodyText.includes('phone number has already been used too many times') ||
-               bodyText.includes('cannot be used for verification') ||
-               bodyText.includes('invalid phone number') ||
-               bodyText.includes('something went wrong');
-    });
-
-    if (errorExists) {
+    // Wait for either the code input to appear OR an error text to show up
+    try {
+        await page.waitForFunction(() => {
+            const codeInput = document.querySelector('#code, input[name="code"], #idvPin, input[maxlength="6"], input[aria-label*="code" i]');
+            if (codeInput && codeInput.offsetParent !== null) return 'SUCCESS';
+            
+            const bodyText = document.body.innerText.toLowerCase();
+            const hasError = bodyText.includes('phone number has already been used') ||
+                             bodyText.includes('cannot be used for verification') ||
+                             bodyText.includes('invalid phone number') ||
+                             bodyText.includes('something went wrong');
+            if (hasError) return 'REJECTED';
+            
+            return false;
+        }, { timeout: 8000 });
+        
+        const isRejected = await page.evaluate(() => {
+            const bodyText = document.body.innerText.toLowerCase();
+            return bodyText.includes('phone number has already been used') ||
+                   bodyText.includes('cannot be used for verification') ||
+                   bodyText.includes('invalid phone number') ||
+                   bodyText.includes('something went wrong');
+        });
+        
+        if (isRejected) {
+            throw new Error('PHONE_REJECTED');
+        }
+        
+        await screenshot(page, 'after_phone_entry');
+        console.log(`[PhoneBot] Phone entered (${fullPhone}) and accepted. URL: ${page.url()}`);
+    } catch (e) {
+        // If it timed out, it means we never saw the code input field and no explicit error text appeared.
+        // It's highly likely the number was rejected silently or stuck.
+        console.log(`[PhoneBot] Rejection or timeout detected. Error: ${e.message}`);
         throw new Error('PHONE_REJECTED');
     }
     
