@@ -81,6 +81,8 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
   const [revealedPassIds, setRevealedPassIds] = useState<Set<string>>(new Set());
   const [phoneVerifyingIds, setPhoneVerifyingIds] = useState<Set<string>>(new Set());
   const [phoneVerifyResults, setPhoneVerifyResults] = useState<Record<string, 'queued' | 'error'>>();
+  const [statusCheckingIds, setStatusCheckingIds] = useState<Set<string>>(new Set());
+  const [statusResults, setStatusResults] = useState<Record<string, string>>({});
   const [uploadingFile, setUploadingFile] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [addAccountData, setAddAccountData] = useState({ email: '', password: '', collection: '' });
@@ -447,7 +449,36 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
     }
   };
 
-  const handleAge18Plus = async (acc: Account) => {
+  const checkAccountStatus = async (acc: Account) => {
+    setStatusCheckingIds(prev => new Set(prev).add(acc.id));
+    setStatusResults(prev => { const n = { ...prev } as Record<string, string>; delete n[acc.id]; return n; });
+    try {
+      const res = await fetch('/api/accounts/check-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: acc.email, password: acc.password })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatusResults(prev => ({ ...prev, [acc.id]: data.status }));
+        if (data.status === 'ACTIVE') toast('Account is active!', 'ok');
+        else if (data.status === 'REQUIRES_PHONE_VERIFY') toast('Requires phone verify', 'info');
+        else if (data.status === 'ACCOUNT_NOT_FOUND') toast('Account not found', 'err');
+        else if (data.status === 'WRONG_PASSWORD') toast('Wrong password', 'err');
+        else toast(`Status: ${data.status}`, 'info');
+      } else {
+        setStatusResults(prev => ({ ...prev, [acc.id]: 'ERROR' }));
+        toast('Failed to check status', 'err');
+      }
+    } catch (e) {
+      setStatusResults(prev => ({ ...prev, [acc.id]: 'ERROR' }));
+      toast('Connection error', 'err');
+    } finally {
+      setStatusCheckingIds(prev => { const n = new Set(prev); n.delete(acc.id); return n; });
+    }
+  };
+
+  const handleArchiveSingle = async (acc: Account) => {
     setAge18LoadingIds(prev => new Set(prev).add(acc.id));
     try {
       const res = await fetch('/api/manage/set-age-18plus', {
@@ -1028,6 +1059,25 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
                           </>
                         ) : (
                           <>
+                            <button
+                              onClick={() => checkAccountStatus(acc)}
+                              disabled={statusCheckingIds.has(acc.id)}
+                              title="Check Login Status"
+                              className={`p-2.5 rounded-xl transition-all shrink-0 ${statusResults?.[acc.id] === 'ACTIVE'
+                                ? 'text-emerald-400 bg-emerald-500/10'
+                                : statusResults?.[acc.id] === 'REQUIRES_PHONE_VERIFY'
+                                  ? 'text-orange-400 bg-orange-500/10'
+                                  : statusResults?.[acc.id] === 'ACCOUNT_NOT_FOUND' || statusResults?.[acc.id] === 'SUSPENDED' || statusResults?.[acc.id] === 'WRONG_PASSWORD'
+                                    ? 'text-rose-400 bg-rose-500/10'
+                                    : 'text-blue-400 hover:bg-blue-500/10'
+                                } disabled:opacity-40`}
+                            >
+                              {statusCheckingIds.has(acc.id) ? (
+                                <svg className="animate-spin" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                              ) : (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                              )}
+                            </button>
                             <button
                               onClick={() => generateOTP(acc.id)}
                               title="Generate OTP"

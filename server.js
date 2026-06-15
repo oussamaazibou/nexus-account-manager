@@ -11,6 +11,8 @@ const { Client } = pkg;
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { deleteFileOrFolder } from './dist/utils/fileOps.js';
+import { checkStatus } from './checkStatusBot.js';
 import { SSHUploader } from './dist/services/ssh/SSHUploader.js';
 import * as AVModule from './dist/services/verification/AccountVerifier.js';
 const { AccountVerifier } = AVModule;
@@ -1759,6 +1761,20 @@ app.post('/api/accounts/check-login', async (req, res) => {
         });
     } catch (e) {
         console.error('Check Login Error:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/accounts/check-status', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+        console.log(`[CheckStatus] Checking status for ${email}`);
+        const result = await checkStatus({ email, password });
+        res.json({ success: true, status: result.status, details: result.details });
+    } catch (e) {
+        console.error('Check Status Error:', e);
         res.status(500).json({ error: e.message });
     }
 });
