@@ -292,8 +292,8 @@ const PhoneVerifyAccounts: React.FC = () => {
     // automatically starts the next 10, and so on until all selected are done.
     const startingRef = useRef(false);
     
-    const handleBulkStart = async (autoQueue?: PhoneAccount[]) => {
-        const queue = autoQueue || accounts.filter(a => selectedIds.has(a.id));
+    const handleBulkStart = async (autoQueue?: PhoneAccount[] | any) => {
+        const queue = (Array.isArray(autoQueue) ? autoQueue : null) || accounts.filter(a => selectedIds.has(a.id));
         if (queue.length === 0) return;
 
         bulkCancelRef.current = false;
