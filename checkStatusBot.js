@@ -54,8 +54,8 @@ export async function checkStatus(account) {
         await emailEl.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
         await emailEl.type(email, { delay: TYPE_DELAY });
         await sleep(200);
-        await clickNext(page);
-        await sleep(1000);
+        await emailEl.press('Enter').catch(() => page.keyboard.press('Enter'));
+        await sleep(1500);
 
         // Check if page text shows account not found or captcha
         let pageText = await page.evaluate(() => document.body.innerText.toLowerCase()).catch(() => '');
@@ -75,7 +75,7 @@ export async function checkStatus(account) {
             const pwEl = await page.waitForSelector('input[type="password"]', { visible: true, timeout: 5000 });
             await pwEl.type(password, { delay: TYPE_DELAY });
             await sleep(200);
-            await clickNext(page);
+            await pwEl.press('Enter').catch(() => page.keyboard.press('Enter'));
         } catch (e) {
             // Password box didn't appear, check text again
             pageText = await page.evaluate(() => document.body.innerText.toLowerCase()).catch(() => '');
