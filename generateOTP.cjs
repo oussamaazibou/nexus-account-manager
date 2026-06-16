@@ -57,7 +57,8 @@ async function getSecretKeyFromSSH(email) {
         const conn = new Client();
 
         conn.on('ready', () => {
-            const remotePath = `/home/brightmindscampus/${email}/${email}_authenticator_secret_key.txt`;
+            const domain = email.split('@')[1] || 'brightmindscampus';
+            const remotePath = `/home/${domain}/${email}/${email}_authenticator_secret_key.txt`;
             console.log(`[OTP Generator] SSH connected. Fetching from: ${remotePath}`);
 
             conn.sftp((err, sftp) => {
