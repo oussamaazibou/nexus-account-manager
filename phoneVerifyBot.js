@@ -74,7 +74,7 @@ export async function doGoogleLogin(browser, email, password) {
     await sleep(200);
     // Submit using Enter on the input field itself
     await emailEl.press('Enter').catch(() => page.keyboard.press('Enter'));
-    await sleep(1500); 
+    await sleep(4000); 
 
     // Enter password (might be skipped if account is suspended or already remembered)
     try {
@@ -84,6 +84,9 @@ export async function doGoogleLogin(browser, email, password) {
         await pwEl.press('Enter').catch(() => page.keyboard.press('Enter'));
     } catch (e) {
         console.log(`[PhoneBot] No password field appeared for ${email}. Proceeding to check page status...`);
+        const html = await page.content();
+        fs.writeFileSync(path.join(__dirname, 'error_page.html'), html);
+        console.log(`[PhoneBot] Saved error_page.html for debugging.`);
     }
 
     try {
