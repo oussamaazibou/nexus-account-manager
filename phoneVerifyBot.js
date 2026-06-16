@@ -122,14 +122,48 @@ export async function doGoogleLogin(browser, email, password) {
 
     // Check if phone verification is required
     let requiresVerification = true;
-    if (url.includes('myaccount.google.com') || url.includes('mail.google.com')) {
+    let finalUrl = url;
+
+    // Check for TOTP/Authenticator
+    const otpInputCheck = await page.$('input[name="totpPin"], input[id*="totp"], input[id*="otp"], input[type="tel"]').catch(() => null);
+    if (otpInputCheck || finalUrl.includes('challenge/totp') || finalUrl.includes('challenge/pwd')) {
+        const pageTxt = await page.evaluate(() => document.body.innerText.toLowerCase()).catch(() => '');
+        if (pageTxt.includes('google authenticator') || pageTxt.includes('get a verification code') || otpInputCheck) {
+            console.log(`[PhoneBot] TOTP requested for ${email}, generating...`);
+            const genOtpModule = await import('./generateOTP.cjs');
+            const otpCode = await genOtpModule.getOTPForAccount(email);
+            
+            if (otpCode) {
+                console.log(`[PhoneBot] Submitting OTP ${otpCode} for ${email}`);
+                const totpInput = await page.waitForSelector('input[name="totpPin"], input[id*="totp"], input[id*="otp"], input[type="tel"]', { visible: true, timeout: 5000 }).catch(() => null);
+                if (totpInput) {
+                    await totpInput.click({ clickCount: 3 });
+                    await page.keyboard.press('Backspace');
+                    await totpInput.type(otpCode, { delay: TYPE_DELAY });
+                    await sleep(500);
+                    await clickNext(page);
+                    
+                    try {
+                        await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 });
+                    } catch { /* might not fire */ }
+                    await sleep(1500);
+                    finalUrl = page.url();
+                    console.log(`[PhoneBot] After TOTP URL: ${finalUrl}`);
+                }
+            } else {
+                console.log(`[PhoneBot] No OTP secret found for ${email}`);
+            }
+        }
+    }
+
+    if (finalUrl.includes('myaccount.google.com') || finalUrl.includes('mail.google.com')) {
         requiresVerification = false;
     } else {
         // If we are still on accounts.google.com, we might be on an intermediate "Verify it's you" or "Disabled" page.
         let hasInput = await page.$('#phoneNumberId, input[name="phoneNumber"], input[type="tel"]').catch(() => null);
         
         if (!hasInput) {
-            console.log(`[PhoneBot] No phone input found on ${url}, attempting to click Next/Start...`);
+            console.log(`[PhoneBot] No phone input found on ${finalUrl}, attempting to click Next/Start...`);
             const clicked = await clickNext(page);
             if (clicked) {
                 try {

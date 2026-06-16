@@ -88,8 +88,37 @@ export async function checkStatus(account) {
         } catch { /* might not fire */ }
         await sleep(1500);
 
-        const url = page.url();
+        let url = page.url();
         pageText = await page.evaluate(() => document.body.innerText.toLowerCase()).catch(() => '');
+
+        // Check for TOTP/Authenticator
+        const otpInputCheck = await page.$('input[name="totpPin"], input[id*="totp"], input[id*="otp"], input[type="tel"]').catch(() => null);
+        if (otpInputCheck || url.includes('challenge/totp') || url.includes('challenge/pwd')) {
+            if (pageText.includes('google authenticator') || pageText.includes('get a verification code') || otpInputCheck) {
+                console.log(`[CheckStatus] TOTP requested for ${email}, generating...`);
+                const genOtpModule = await import('./generateOTP.cjs');
+                const otpCode = await genOtpModule.getOTPForAccount(email);
+                
+                if (otpCode) {
+                    console.log(`[CheckStatus] Submitting OTP ${otpCode} for ${email}`);
+                    const totpInput = await page.waitForSelector('input[name="totpPin"], input[id*="totp"], input[id*="otp"], input[type="tel"]', { visible: true, timeout: 5000 }).catch(() => null);
+                    if (totpInput) {
+                        await totpInput.click({ clickCount: 3 });
+                        await page.keyboard.press('Backspace');
+                        await totpInput.type(otpCode, { delay: TYPE_DELAY });
+                        await sleep(500);
+                        await clickNext(page);
+                        
+                        try {
+                            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 });
+                        } catch { /* might not fire */ }
+                        await sleep(1500);
+                        url = page.url();
+                        pageText = await page.evaluate(() => document.body.innerText.toLowerCase()).catch(() => '');
+                    }
+                }
+            }
+        }
 
         // Check for login errors
         const errEl = await page.$('[data-error-code], .Ekjuhf, .dEOOab, .o6cuMc');
