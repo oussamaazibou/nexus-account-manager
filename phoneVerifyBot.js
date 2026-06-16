@@ -72,15 +72,15 @@ export async function doGoogleLogin(browser, email, password) {
     await emailEl.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
     await emailEl.type(email, { delay: TYPE_DELAY });
     await sleep(200);
-    await page.keyboard.press('Enter');
-    await sleep(1500); 
+    await clickNext(page);
+    await sleep(1000); 
 
     // Enter password (might be skipped if account is suspended or already remembered)
     try {
         const pwEl = await page.waitForSelector('input[type="password"]', { visible: true, timeout: 8000 });
         await pwEl.type(password, { delay: TYPE_DELAY });
         await sleep(200);
-        await page.keyboard.press('Enter');
+        await clickNext(page);
     } catch (e) {
         console.log(`[PhoneBot] No password field appeared for ${email}. Proceeding to check page status...`);
     }
