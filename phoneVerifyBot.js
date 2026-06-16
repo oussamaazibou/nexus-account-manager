@@ -226,7 +226,7 @@ export async function enterPhoneNumber(page, phone) {
     await input.type(fullPhone, { delay: TYPE_DELAY });
     await sleep(300); // Reduced from 600
     await screenshot(page, 'phone_typed');
-    await clickNext(page);
+    await page.keyboard.press('Enter');
     
     // Wait for either the code input to appear OR an error text to show up
     try {
@@ -323,7 +323,7 @@ export async function retryWithNewPhone(page, newPhone) {
     await sleep(200);
     await input.type(fullPhone, { delay: TYPE_DELAY });
     await sleep(400);
-    await clickNext(page);
+    await page.keyboard.press('Enter');
     
     // Wait for either the code input to appear OR an error text to show up
     try {
@@ -385,7 +385,7 @@ export async function enterSmsCode(page, code) {
     await input.click({ clickCount: 3 });
     await input.type(code, { delay: TYPE_DELAY });
     await sleep(400);
-    await clickNext(page);
+    await page.keyboard.press('Enter');
     await sleep(3000);
 
     await screenshot(page, 'after_code_entry');
