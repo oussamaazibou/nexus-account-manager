@@ -7,10 +7,11 @@ function getCaptchaKey() {
         const configPath = path.join(__dirname, 'config.json');
         if (fs.existsSync(configPath)) {
             const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            return config.captchaKey || null;
+            if (config.captchaKey) return config.captchaKey;
         }
     } catch (e) { /* ignore */ }
-    return null;
+    // Fall back to the 2Captcha key already used by AccountVerifier.ts
+    return '4a8189e5ca7d59ebcd481b14387f58e4';
 }
 
 /**

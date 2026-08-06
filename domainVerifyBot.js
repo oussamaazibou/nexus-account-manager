@@ -14,6 +14,9 @@ import fs from 'fs';
 import axios from 'axios';
 import { fileURLToPath } from 'url';
 import genOtp from './generateOTP.cjs';
+import cSolver from './captchaSolver.cjs';
+
+const { solveGoogleLoginCaptchaIfPresent } = cSolver;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -115,10 +118,27 @@ export async function googleLogin(browser, email, password, log = () => {}) {
     ]).catch(() => 'timeout');
 
     if (resp === 'not_found') throw new Error('ACCOUNT_NOT_FOUND');
-    if (resp === 'captcha') throw new Error('CAPTCHA_BLOCKED');
 
     // Password (may be skipped if remembered / already logged in)
     let pwEl = resp === 'password' ? await page.$('input[type="password"]') : null;
+
+    // Solve Google's image captcha with 2Captcha if it blocks the login
+    if (resp === 'captcha' || !pwEl) {
+        const hasCaptcha = await page.evaluate(() => {
+            const img = document.querySelector('img#captchaimg') || document.querySelector('img[src*="Captcha"]');
+            return !!(img && img.offsetHeight > 0);
+        }).catch(() => false);
+        if (hasCaptcha) {
+            log(`[Login] CAPTCHA detected for ${email} — solving with 2Captcha…`);
+            const solved = await solveGoogleLoginCaptchaIfPresent(page, password);
+            log(solved ? `[Login] CAPTCHA solved and submitted` : `[Login] CAPTCHA solver did not complete`);
+            await sleep(2500);
+            pwEl = await page.$('input[type="password"]');
+        }
+    }
+
+    if (!pwEl) pwEl = await page.waitForSelector('input[type="password"]', { visible: true, timeout: 8000 }).catch(() => null);
+
     if (pwEl) {
         await pwEl.click({ clickCount: 3 });
         await page.keyboard.press('Backspace');
@@ -130,9 +150,16 @@ export async function googleLogin(browser, email, password, log = () => {}) {
         log(`[Login] No password field appeared for ${email} (${resp})`);
     }
 
-    // Surface any error shown right after submit
+    // Surface any error shown right after submit (solve captcha before failing)
     let bodyText = await page.evaluate(() => document.body.innerText).catch(() => '');
     let err = detectLoginError(bodyText);
+    if (err === 'CAPTCHA_BLOCKED') {
+        log(`[Login] CAPTCHA blocked after password submit — solving with 2Captcha…`);
+        await solveGoogleLoginCaptchaIfPresent(page, password);
+        await sleep(3000);
+        bodyText = await page.evaluate(() => document.body.innerText).catch(() => '');
+        err = detectLoginError(bodyText);
+    }
     if (err) throw new Error(err);
 
     // TOTP / Authenticator challenge
