@@ -35,6 +35,57 @@ A high-performance dashboard for managing, verifying, and monitoring Google Work
 
 ---
 
+## 🐧 Fresh Ubuntu 24.04 (VPS) Server Setup
+
+One-time, run as root. Skip any step you already have.
+
+### 1. System packages + Git
+
+```bash
+apt update
+apt install -y git curl ca-certificates
+```
+
+### 2. Node.js v20+ (NodeSource)
+
+> ⚠️ Ubuntu's default Node is v18 — the AWS SDK v3 stops supporting it after January 2026 and the app targets Node 20+.
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
+node --version   # should print v20.x or higher
+```
+
+### 3. Redis (job queue)
+
+```bash
+apt install -y redis-server
+systemctl enable --now redis-server
+redis-cli ping   # should reply PONG
+```
+
+> The service already owns port 6379 — do **not** run `redis-server` manually, it will fail with `bind: Address already in use`.
+
+### 4. Google Chrome runtime libraries (Puppeteer)
+
+The bot launches headless Chrome, which needs these system libraries. Ubuntu 24.04 uses the `t64` package names:
+
+```bash
+apt install -y libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libnss3 libnspr4 libatspi2.0-0t64 libdrm2 libx11-xcb1 libxshmfence1 fonts-liberation
+```
+
+Chrome itself is downloaded automatically (to `~/.cache/puppeteer`) during `npm install`. If a later run reports a different missing `*.so` library, install the matching package (on 24.04 append `t64` to the package name).
+
+### 5. Google Cloud SDK (optional)
+
+Only needed for the Cloud-project setup scripts:
+
+```bash
+apt install -y google-cloud-cli
+```
+
+---
+
 ## 🚀 Installation
 
 ### 1. Clone the repository
@@ -97,8 +148,17 @@ ORG_ID=
 
 ### 5. Start Redis
 
+On a server (systemd):
+
 ```bash
-redis-server
+systemctl start redis-server
+redis-cli ping   # PONG
+```
+
+If you installed Redis without systemd (e.g. Docker/WSL), start it directly:
+
+```bash
+redis-server &
 ```
 
 ### 6. Run the application
@@ -108,6 +168,13 @@ node server.js
 ```
 
 The server listens on port `4000` and starts the job worker automatically. Open **http://localhost:4000**.
+
+To keep it running after you log out of SSH, run it in the background (or set up a `systemd` service):
+
+```bash
+nohup node server.js > server.log 2>&1 &
+tail -f server.log
+```
 
 ### 7. Login
 
