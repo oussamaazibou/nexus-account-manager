@@ -58,8 +58,12 @@ async function getSecretKeyFromSSH(email) {
 
         conn.on('ready', () => {
             const domain = email.split('@')[1] || 'brightmindscampus';
-            const remotePath = `/home/${domain}/${email}/${email}_authenticator_secret_key.txt`;
-            console.log(`[OTP Generator] SSH connected. Fetching from: ${remotePath}`);
+            const configuredBase = getSftpBasePath();
+            const paths = [
+                `${configuredBase}/${email}/${email}_authenticator_secret_key.txt`,
+                `/home/brightmindscampus/${email}/${email}_authenticator_secret_key.txt`,
+                `/home/${domain}/${email}/${email}_authenticator_secret_key.txt`
+            ];
 
             conn.sftp((err, sftp) => {
                 if (err) {
@@ -67,18 +71,23 @@ async function getSecretKeyFromSSH(email) {
                     return reject(new Error(`SFTP error: ${err.message}`));
                 }
 
-                sftp.readFile(remotePath, 'utf8', (err, data) => {
-                    conn.end();
-
-                    if (err) {
-                        return reject(new Error(`Failed to read secret key from SSH: ${err.message}`));
+                const tryPaths = (idx) => {
+                    if (idx >= paths.length) {
+                        conn.end();
+                        return reject(new Error(`Secret key not found on SSH server. Tried: ${paths.join(', ')}`));
                     }
-
-                    const secret = data.trim();
-                    console.log(`[OTP Generator] Secret key fetched successfully (length: ${secret.length} chars)`);
-                    console.log(`[OTP Generator] Secret key preview: ${secret.substring(0, 10)}...`);
-                    resolve(secret);
-                });
+                    const remotePath = paths[idx];
+                    console.log(`[OTP Generator] SSH connected. Trying: ${remotePath}`);
+                    sftp.readFile(remotePath, 'utf8', (err2, data) => {
+                        if (err2) return tryPaths(idx + 1);
+                        conn.end();
+                        const secret = data.trim();
+                        console.log(`[OTP Generator] Secret key fetched successfully (length: ${secret.length} chars)`);
+                        console.log(`[OTP Generator] Secret key preview: ${secret.substring(0, 10)}...`);
+                        resolve(secret);
+                    });
+                };
+                tryPaths(0);
             });
         });
 
@@ -95,6 +104,21 @@ async function getSecretKeyFromSSH(email) {
             password: process.env.SSH_PASSWORD || 'JnsQ3G98JU027QP'
         });
     });
+}
+
+/**
+ * Resolve the SFTP base path from config.json (matches /api/manual-otp + SSHUploader)
+ */
+function getSftpBasePath() {
+    try {
+        const configPath = path.join(__dirname, 'config.json');
+        if (fs.existsSync(configPath)) {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            if (config.sftpPath) return config.sftpPath;
+        }
+    } catch (e) { /* ignore */ }
+    if (process.env.SSH_BASE_PATH) return process.env.SSH_BASE_PATH;
+    return '/home/brightmindscampus';
 }
 
 /**
@@ -123,6 +147,13 @@ async function getOTPForAccount(email) {
         if (!secret) {
             throw new Error(`Secret key is empty for ${email}`);
         }
+
+        // 3. Cache locally for faster future lookups
+        try {
+            const secretsDir = path.join(__dirname, 'secrets');
+            if (!fs.existsSync(secretsDir)) fs.mkdirSync(secretsDir, { recursive: true });
+            fs.writeFileSync(path.join(secretsDir, `${email}_secret.txt`), secret);
+        } catch (e) { /* caching is best-effort */ }
 
         const otp = generateTOTP(secret);
         console.log(`[OTP Generator] Generated OTP for ${email}: ${otp}`);
