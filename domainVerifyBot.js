@@ -661,7 +661,16 @@ export async function verifyUnverifiedDomains(account, opts = {}) {
                 break;
             }
             if (!cid) {
-                cid = await getCidForDomain(page, domain, log);
+                // Retry the Admin Console Verify click up to 3 times before
+                // giving up on this domain — the click or navigation often
+                // fails transiently under concurrency, and the session is
+                // still alive so a fresh reload usually succeeds.
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    cid = await getCidForDomain(page, domain, log);
+                    if (cid) break;
+                    log(`[Account] cid fetch attempt ${attempt}/3 failed for ${domain}`);
+                    if (attempt < 3) await sleep(5000);
+                }
                 if (!cid) {
                     log(`[Account] Could not obtain cid for ${domain}`);
                     results.push({ domain, status: 'error', error: 'Could not obtain cid from Admin Console (Verify action not found or no cid in URL)' });
