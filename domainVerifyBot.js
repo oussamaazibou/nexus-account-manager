@@ -278,57 +278,102 @@ async function upsertCloudflareTxt(domainName, txtToken, log = () => {}) {
 // ── Tick the confirmation checkbox beside the "Come back here…" text ──────────
 async function clickConfirmCheckbox(page, log = () => {}) {
     const action = await page.evaluate((phrase) => {
-        const els = Array.from(document.querySelectorAll('label, div, span, li, paper-checkbox, mat-checkbox, [role="checkbox"]'));
+        const isChecked = (el) => {
+            if (!el) return false;
+            if (el.getAttribute && el.getAttribute('aria-checked') === 'true') return true;
+            const input = el.querySelector && el.querySelector('input[type="checkbox"]');
+            if (input && input.checked) return true;
+            return false;
+        };
+        // Find a real clickable checkbox control near the phrase text
+        const findCheckbox = (container) => {
+            let input = container.querySelector && container.querySelector('input[type="checkbox"]');
+            if (input) return { type: 'input', el: input };
+            let rc = container.querySelector && container.querySelector('[role="checkbox"]');
+            if (rc) return { type: 'role', el: rc };
+            let pc = container.querySelector && container.querySelector('paper-checkbox, mat-checkbox, material-checkbox');
+            if (pc) return { type: 'host', el: pc };
+            return null;
+        };
+
+        const els = Array.from(document.querySelectorAll('label, div, span, li, paper-checkbox, mat-checkbox, material-checkbox, [role="checkbox"]'));
         const candidates = els.filter(el => {
             const t = ((el.textContent || '').trim()).toLowerCase();
             return t.includes(phrase) && t.length < 500;
         });
-        // Most specific (shortest text) first
         candidates.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
 
-        const isChecked = (el) => {
-            if (el instanceof HTMLElement) {
-                if (el.getAttribute('aria-checked') === 'true') return true;
-                const input = el.querySelector('input[type="checkbox"]');
-                if (input && input.checked) return true;
-                if (el.classList.contains('is-checked') || el.classList.contains('checked')) return true;
-            }
-            return false;
-        };
-
         for (const el of candidates) {
-            const rect = el.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) continue;
-            if (isChecked(el)) return 'already-checked';
-            try {
-                el.click();
-            } catch (err) {
-                continue;
+            let cb = findCheckbox(el);
+            if (!cb) {
+                // the container itself may be the checkbox host
+                if (el.matches && el.matches('paper-checkbox, mat-checkbox, material-checkbox, [role="checkbox"]')) cb = { type: 'host', el };
             }
-            return 'clicked-label';
+            if (!cb) continue;
+            if (isChecked(cb.el)) return 'already-checked';
+            try {
+                cb.el.click();
+                return 'clicked-' + cb.type;
+            } catch (e) { continue; }
         }
 
-        // Fallback: click any visible unchecked checkbox (the codes page has few)
+        // Fallback: click the first visible unchecked checkbox on the page
         const boxes = Array.from(document.querySelectorAll('input[type="checkbox"], [role="checkbox"]'));
         for (const b of boxes) {
-            const rect = b.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) continue;
+            if (b.getBoundingClientRect().width === 0) continue;
             const checked = b.getAttribute('aria-checked') === 'true' || (b.checked === true);
             if (!checked) {
-                try { b.click(); return 'clicked-input'; } catch (err) { continue; }
+                try { b.click(); return 'clicked-fallback'; } catch (e) { continue; }
             }
         }
         return 'none';
     }, CHECKBOX_PHRASE);
 
     log(`[Verify] Confirm checkbox: ${action}`);
-    await sleep(1200);
-    return action !== 'none';
+    await sleep(1500);
+
+    // Verify it actually got checked; retry via keyboard if not
+    let state = await page.evaluate((phrase) => {
+        const el = Array.from(document.querySelectorAll('label, div, span, li, paper-checkbox, mat-checkbox, material-checkbox, [role="checkbox"]'))
+            .find(e => ((e.textContent || '').trim().toLowerCase()).includes(phrase));
+        if (!el) return 'not-found';
+        if (el.getAttribute && el.getAttribute('aria-checked') === 'true') return 'checked';
+        const input = el.querySelector && el.querySelector('input[type="checkbox"]');
+        if (input) return input.checked ? 'checked' : 'unchecked';
+        return 'unknown';
+    }, CHECKBOX_PHRASE).catch(() => 'error');
+
+    if (state === 'unchecked') {
+        log(`[Verify] Checkbox not checked after click — toggling via native input`);
+        await page.evaluate((phrase) => {
+            const el = Array.from(document.querySelectorAll('div, span, label, li'))
+                .find(e => ((e.textContent || '').trim().toLowerCase()).includes(phrase));
+            if (!el) return;
+            const input = el.querySelector && el.querySelector('input[type="checkbox"]');
+            if (input) {
+                input.click();
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }, CHECKBOX_PHRASE).catch(() => {});
+        await sleep(1500);
+        state = await page.evaluate((phrase) => {
+            const el = Array.from(document.querySelectorAll('div, span, label, li, [role="checkbox"]'))
+                .find(e => ((e.textContent || '').trim().toLowerCase()).includes(phrase));
+            if (!el) return 'not-found';
+            if (el.getAttribute && el.getAttribute('aria-checked') === 'true') return 'checked';
+            const input = el.querySelector && el.querySelector('input[type="checkbox"]');
+            if (input) return input.checked ? 'checked' : 'unchecked';
+            return 'unknown';
+        }, CHECKBOX_PHRASE).catch(() => 'error');
+    }
+
+    log(`[Verify] Checkbox final state: ${state}`);
+    return state === 'checked';
 }
 
 // ── Press the confirm / verify button ─────────────────────────────────────────
 async function clickConfirmButton(page, log = () => {}) {
-    const clickedText = await page.evaluate(() => {
+    const info = await page.evaluate(() => {
         const btns = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"], paper-button, mat-button'));
         const visible = btns.filter(b => {
             try { return b.offsetParent !== null && b.getBoundingClientRect().width > 0; } catch (e) { return false; }
@@ -338,20 +383,46 @@ async function clickConfirmButton(page, log = () => {}) {
             const t = textOf(b);
             return t && t.length < 40 && keywords.some(k => t.includes(k));
         });
-
         let btn = pick(['confirm', 'verify', 'check now', 'activate', 'submit', 'continue']);
         if (!btn) btn = pick(['next']);
-        if (!btn) return null;
-        const label = textOf(btn);
-        try { btn.click(); return label; } catch (e) { return null; }
-    });
+        if (!btn) return { found: false };
+        return {
+            found: true,
+            label: textOf(btn),
+            disabled: btn.disabled === true || btn.getAttribute('aria-disabled') === 'true' || btn.hasAttribute('disabled')
+        };
+    }).catch(() => ({ found: false }));
 
-    if (clickedText) {
-        log(`[Verify] Confirm button clicked: "${clickedText}"`);
-        return true;
+    if (!info.found) {
+        log(`[Verify] Confirm button not found`);
+        return false;
     }
-    log(`[Verify] Confirm button not found`);
-    return false;
+    if (info.disabled) {
+        log(`[Verify] Confirm button is DISABLED ("${info.label}") — checkbox likely not registered`);
+        return false;
+    }
+
+    const clicked = await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"], paper-button, mat-button'));
+        const visible = btns.filter(b => {
+            try { return b.offsetParent !== null && b.getBoundingClientRect().width > 0; } catch (e) { return false; }
+        });
+        const textOf = (b) => (b.innerText || b.textContent || '').trim().toLowerCase();
+        const pick = (keywords) => visible.find(b => {
+            const t = textOf(b);
+            return t && t.length < 40 && keywords.some(k => t.includes(k));
+        });
+        let btn = pick(['confirm', 'verify', 'check now', 'activate', 'submit', 'continue']);
+        if (!btn) btn = pick(['next']);
+        if (!btn) return false;
+        try { btn.click(); return true; } catch (e) { return false; }
+    }).catch(() => false);
+
+    log(`[Verify] Confirm button clicked: "${info.label}" (disabled=${info.disabled})`);
+    await sleep(2000);
+    const afterText = await page.evaluate(() => document.body.innerText.substring(0, 220).replace(/\n+/g, ' ')).catch(() => '');
+    log(`[Verify] After confirm — page: ${afterText}`);
+    return clicked;
 }
 
 // ── Poll Directory API until domain.verified === true ─────────────────────────
@@ -477,11 +548,14 @@ async function verifyDomainOnPage(page, domain, keyData, adminEmail, log = () =>
         log(`[Verify] No TXT token extractable for ${domain} — DNS may already be configured`);
     }
 
-    await clickConfirmCheckbox(page, log);
+    const cbOk = await clickConfirmCheckbox(page, log);
+    if (!cbOk) {
+        log(`[Verify] ⚠️ Checkbox could not be checked for ${domain} — confirmation may fail`);
+    }
 
     const btnClicked = await clickConfirmButton(page, log);
     if (!btnClicked) {
-        return { domain, status: 'error', error: 'Confirm button not found' };
+        return { domain, status: 'error', error: 'Confirm button not found or disabled' };
     }
 
     log(`[Verify] Waiting up to 45s for ${domain} to verify…`);
