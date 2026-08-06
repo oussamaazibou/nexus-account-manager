@@ -629,7 +629,24 @@ export async function verifyUnverifiedDomains(account, opts = {}) {
         if (!password) throw new Error('No password available for account');
 
         browser = await launchBrowser(proxy);
-        const page = await googleLogin(browser, email, password, log);
+
+        // Retry the login (fresh page each attempt) — transient failures like
+        // LOGIN_FAILED or detaching nodes under concurrency usually succeed on
+        // a second try.
+        let page = null;
+        let loginErr = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            if (shouldStop()) break;
+            try {
+                page = await googleLogin(browser, email, password, log);
+                break;
+            } catch (e) {
+                loginErr = e;
+                log(`[Account] Login attempt ${attempt}/3 failed: ${e.message}`);
+                if (attempt < 3) await sleep(6000);
+            }
+        }
+        if (!page) throw loginErr || new Error('LOGIN_FAILED');
         log(`[Account] Logged in as ${email}`);
 
         // cid is per-account (constant across all of an account's domains), so

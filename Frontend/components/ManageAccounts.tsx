@@ -84,6 +84,7 @@ const ManageAccounts: React.FC = () => {
     const [domainVerifyConcurrency, setDomainVerifyConcurrency] = useState<number>(2);
     const [domainVerifyLoading, setDomainVerifyLoading] = useState(false);
     const [domainVerifyEmails, setDomainVerifyEmails] = useState<string[]>([]);
+    const [domainVerifyRetrying, setDomainVerifyRetrying] = useState<string | null>(null);
 
     // Bulk Ops tab
     const [bulkAddDomainText, setBulkAddDomainText] = useState('');
@@ -466,6 +467,38 @@ const ManageAccounts: React.FC = () => {
             toast('Stop requested…', 'info');
         } catch (e: any) {
             toast('Error: ' + e.message, 'err');
+        }
+    };
+
+    // Retry a single failed account (LOGIN_FAILED / other transient errors)
+    const handleRetryDomainVerify = async (adminEmail: string) => {
+        setDomainVerifyRetrying(adminEmail);
+        try {
+            const acc = accounts.find(a => a.email === adminEmail);
+            const res = await fetch(`${API_URL}/manage/domain-verify/retry-one`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ adminEmail, password: acc?.password || undefined })
+            });
+            const data = await res.json();
+            if (data.success && data.result) {
+                const r = data.result;
+                const ok = (r.domains || []).filter((d: any) => d.status === 'verified').length;
+                toast(`Retry ${adminEmail}: ${ok}/${(r.domains || []).length} verified`, ok === (r.domains || []).length && (r.domains || []).length > 0 ? 'ok' : 'err');
+                setDomainVerifyState((prev: any) => {
+                    if (!prev) return prev;
+                    const idx = (prev.results || []).findIndex((x: any) => x.adminEmail === adminEmail);
+                    const results = (prev.results || []).slice();
+                    if (idx >= 0) results[idx] = r; else results.push(r);
+                    return { ...prev, results };
+                });
+            } else {
+                toast(data.error || `Retry ${adminEmail} failed`, 'err');
+            }
+        } catch (e: any) {
+            toast('Error: ' + e.message, 'err');
+        } finally {
+            setDomainVerifyRetrying(null);
         }
     };
 
@@ -1342,9 +1375,47 @@ const ManageAccounts: React.FC = () => {
                                                                     )}
                                                                 </div>
                                                             ))}
+                                                            {domainVerifyState.status !== 'running' && (acc.error || (acc.domains || []).some((d: any) => d.status === 'error')) && (
+                                                                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/5">
+                                                                    <button
+                                                                        onClick={() => handleRetryDomainVerify(acc.adminEmail)}
+                                                                        disabled={domainVerifyRetrying === acc.adminEmail}
+                                                                        className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-white text-xs font-black transition-all shrink-0 disabled:opacity-50"
+                                                                    >
+                                                                        {domainVerifyRetrying === acc.adminEmail ? '⏳ Retrying…' : '↻ Retry'}
+                                                                    </button>
+                                                                    <span className="text-[10px] text-[var(--text-muted)]">…or verify this account manually in the Admin Console → Domains</span>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     ))}
                                                 </div>
+
+                                                {domainVerifyState.status !== 'running' && (domainVerifyState.results || []).some((a: any) => a.error || (a.domains || []).some((d: any) => d.status === 'error')) && (
+                                                    <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                                                        <div className="text-xs font-black text-red-400 uppercase tracking-widest mb-2">⚠ Failed accounts — verify manually or retry</div>
+                                                        <div className="space-y-1.5">
+                                                            {(domainVerifyState.results || [])
+                                                                .filter((a: any) => a.error || (a.domains || []).some((d: any) => d.status === 'error'))
+                                                                .map((a: any) => (
+                                                                    <div key={a.adminEmail} className="flex items-center justify-between gap-2 text-xs">
+                                                                        <span className="font-mono truncate">{a.adminEmail}</span>
+                                                                        <div className="flex items-center gap-2 shrink-0">
+                                                                            <span className="text-red-400 truncate max-w-[220px]">{a.error || 'Some domains failed'}</span>
+                                                                            <button
+                                                                                onClick={() => handleRetryDomainVerify(a.adminEmail)}
+                                                                                disabled={domainVerifyRetrying === a.adminEmail}
+                                                                                className="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-white font-black transition-all disabled:opacity-50"
+                                                                            >
+                                                                                {domainVerifyRetrying === a.adminEmail ? '⏳' : '↻ Retry'}
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                        </div>
+                                                        <div className="text-[10px] text-[var(--text-muted)] mt-2">Manual: open admin.google.com → Domains → click “Verify” next to each unverified domain and follow the on-screen steps.</div>
+                                                    </div>
+                                                )}
 
                                                 {domainVerifyState.logs && domainVerifyState.logs.length > 0 && (
                                                     <div className="bg-black/40 rounded-xl p-3 max-h-40 overflow-y-auto text-[11px] font-mono text-[var(--text-muted)] space-y-0.5">

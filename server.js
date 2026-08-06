@@ -3009,6 +3009,34 @@ app.post('/api/manage/domain-verify/stop', (req, res) => {
     res.json({ success: true });
 });
 
+// Retry a single failed account (e.g. LOGIN_FAILED) synchronously — returns the
+// result so the UI can render it immediately without starting a new bulk job.
+app.post('/api/manage/domain-verify/retry-one', async (req, res) => {
+    try {
+        const { adminEmail, password } = req.body;
+        if (!adminEmail) return res.status(400).json({ error: 'adminEmail required' });
+        const pushLog = (m) => console.log(`[DomainVerify:retry] ${m}`);
+        const keyData = await getKeyData(adminEmail);
+        const unverified = await getUnverifiedDomains(adminEmail, keyData, pushLog);
+        const accResult = { adminEmail, domains: [], error: null };
+
+        if (unverified.length === 0) {
+            accResult.note = 'No unverified domains found';
+        } else {
+            const pwd = password || lookupAccountPassword(adminEmail);
+            const botRes = await runDomainVerifyBot(
+                { email: adminEmail, password: pwd },
+                { adminEmail, unverifiedDomains: unverified, keyData, log: pushLog }
+            );
+            accResult.domains = botRes.results || [];
+            if (botRes.error) accResult.error = botRes.error;
+        }
+        res.json({ success: true, result: accResult });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // Shared helper: delete a domain with retry + delay to handle Google propagation lag
 // Remove all aliases belonging to domainName from any user in allUsers.
 // allUsers must be fetched with projection:'full' so the aliases field is present.
