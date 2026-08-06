@@ -1,0 +1,28 @@
+contact@getsmart.levoria.fun:jWFBoYbeJ8RU|UNKNOWN_STATUS
+contact@beta39.luminovaria.fun:usvvLugrqErN|Waiting for selector `input[type="password"]` failed
+info@global.primexalytics.fun:29J2wbOTZQ5c|Waiting for selector `input[type="password"]` failed
+info@hub2024.travolencia.fun:ug105YCRkgYn|Waiting for selector `input[type="password"]` failed
+contact@centerstudy2.clarvenix.fun:0xL1KwxIbPyt|Waiting for selector `input[type="password"]` failed
+contact@beta39.luminovaria.fun:usvvLugrqErN|Waiting for selector `input[type="password"]` failed
+contact@beta39.luminovaria.fun:usvvLugrqErN|Waiting for selector `input[type="password"]` failed
+contact@beta39.luminovaria.fun:usvvLugrqErN|UNKNOWN_STATUS
+support@program57.lanovera.fun:VyxZmpAucwqH|UNKNOWN_STATUS
+admin@mydigital.zenvetra.fun:ofgy8z3FATxI|SMS Wait Error: TIMEOUT
+info@beta-plus.casacam.net:5ATPAVOeerRo|SMS Service Error: NO_NUMBERS
+support@program57.lanovera.fun:VyxZmpAucwqH|UNKNOWN_STATUS
+contact@beta39.luminovaria.fun:usvvLugrqErN|Execution context was destroyed, most likely because of a navigation.
+support@program57.lanovera.fun:VyxZmpAucwqH|UNKNOWN
+support@program57.lanovera.fun:VyxZmpAucwqH|Execution context was destroyed, most likely because of a navigation.
+support@program57.lanovera.fun:VyxZmpAucwqH|require is not defined
+support@program57.lanovera.fun:VyxZmpAucwqH|require is not defined
+support@program57.lanovera.fun:VyxZmpAucwqH|require is not defined
+admin@leonhoffman.mywire.org:dApy4rT9jXvDn3hW|Attempted to use detached Frame '38AAD3107B260469270C67E3DC487225'.
+admin@college2028.frovinarion.fun:5kYyhw9Uuuk0|Could not find Chrome (ver. 145.0.7632.46). This can occur if either
+ 1. you did not perform an installation before running the script (e.g. `npx puppeteer browsers install chrome`) or
+ 2. your cache path is incorrectly configured (which is: C:\Users\PC\.cache\puppeteer).
+For (2), check out our guide on configuring puppeteer at https://pptr.dev/guides/configuration.
+admin@college2028.frovinarion.fun:5kYyhw9Uuuk0|Login failed (stuck on signin page)
+info@proschool204.lumepilotra.fun:mLsZhB3xUTwo|Login failed (stuck on signin page)
+info@proschool204.lumepilotra.fun:mLsZhB3xUTwo|Login failed (stuck on signin page)
+info@proschool204.lumepilotra.fun:mLsZhB3xUTwo|Waiting for selector `input[type="password"]` failed
+contact@smartweb66.prosenderhub.email:Z9LItvSBJcQx|Execution context was destroyed

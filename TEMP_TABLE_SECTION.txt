@@ -1,0 +1,30 @@
+// TEMP FILE - Contains the table row section with new cells
+// Lines 300-327 replacement
+
+                    </td>
+                    <td className="px-4 py-4">
+                      {acc.collection ? (
+                        <span className="badge bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                          {acc.collection}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-[var(--text-muted)] italic opacity-50">Unsorted</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-4">
+                      {acc.createdAt ? (
+                        <span className="text-xs text-[var(--text-muted)] font-medium">
+                          {new Date(acc.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-[var(--text-muted)] italic opacity-30">Unknown</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-4">
+                      <TrialCountdown createdAt={acc.createdAt} />
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-3">
+                        <span className="badge bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                          NXS V3
+                        </span>

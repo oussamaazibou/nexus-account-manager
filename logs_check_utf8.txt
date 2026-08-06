@@ -1,0 +1,20 @@
+﻿[INF] [2026-02-07T18:19:57.978Z] Executing GCloud: gcloud services enable admin.googleapis.com siteverification.googleapis.com gmail.googleapis.com --project contact-getsmart-w68z3 
+਍嬀䤀一䘀崀 嬀㈀　㈀㘀ⴀ　㈀ⴀ　㜀吀㄀㠀㨀㈀　㨀　㘀⸀㜀㠀㔀娀崀 䔀砀攀挀甀琀椀渀最 䜀䌀氀漀甀搀㨀 最挀氀漀甀搀 椀愀洀 猀攀爀瘀椀挀攀ⴀ愀挀挀漀甀渀琀猀 欀攀礀猀 挀爀攀愀琀攀 䌀㨀尀唀猀攀爀猀尀吀礀氀攀爀尀伀渀攀䐀爀椀瘀攀尀䐀攀猀欀琀漀瀀尀䄀瀀瀀漀甀猀猀愀洀愀尀挀爀攀愀琀攀圀漀爀欀猀瀀愀挀攀䄀挀挀漀甀渀琀尀最攀琀猀洀愀爀琀⸀氀攀瘀漀爀椀愀⸀昀甀渀⸀樀猀漀渀 ⴀⴀ瀀爀漀樀攀挀琀 挀漀渀琀愀挀琀ⴀ最攀琀猀洀愀爀琀ⴀ眀㘀㠀稀㌀ ⴀⴀ椀愀洀ⴀ愀挀挀漀甀渀琀 愀甀琀漀洀愀琀椀漀渀ⴀ猀愀䀀挀漀渀琀愀挀琀ⴀ最攀琀猀洀愀爀琀ⴀ眀㘀㠀稀㌀⸀椀愀洀⸀最猀攀爀瘀椀挀攀愀挀挀漀甀渀琀⸀挀漀洀 ഀഀ
+[INF] [2026-02-07T18:20:10.271Z] Step 6: Upload Key to S3 
+਍嬀䤀一䘀崀 嬀㈀　㈀㘀ⴀ　㈀ⴀ　㜀吀㄀㠀㨀㈀　㨀㄀　⸀㈀㜀㄀娀崀 唀瀀氀漀愀搀椀渀最 昀椀氀攀 琀漀 匀㌀㨀 欀攀礀猀⼀最攀琀猀洀愀爀琀⸀氀攀瘀漀爀椀愀⸀昀甀渀⼀最攀琀猀洀愀爀琀⸀氀攀瘀漀爀椀愀⸀昀甀渀⸀樀猀漀渀 ഀഀ
+[INF] [2026-02-07T18:20:10.745Z] Upload successfully: keys/getsmart.levoria.fun/getsmart.levoria.fun.json 
+਍嬀䤀一䘀崀 嬀㈀　㈀㘀ⴀ　㈀ⴀ　㜀吀㄀㠀㨀㈀　㨀㄀　⸀㜀㐀㘀娀崀 匀琀攀瀀 㜀㨀 䌀漀渀昀椀最甀爀攀 䐀漀洀愀椀渀ⴀ圀椀搀攀 䐀攀氀攀最愀琀椀漀渀 ഀഀ
+[DWD] Starting automation for automation-sa@contact-getsmart-w68z3.iam.gserviceaccount.com
+਍嬀䐀圀䐀崀 䰀漀最最椀渀最 椀渀 琀漀 䜀漀漀最氀攀 䄀搀洀椀渀⸀⸀⸀ഀഀ
+[DWD] Logged in successfully
+਍嬀䐀圀䐀崀 䄀搀搀椀渀最 渀攀眀 挀氀椀攀渀琀⸀⸀⸀ഀഀ
+[DWD] Clicked Add New button
+਍嬀䐀圀䐀崀 䘀攀琀挀栀椀渀最 匀攀爀瘀椀挀攀 䄀挀挀漀甀渀琀 唀渀椀焀甀攀 䤀䐀⸀⸀⸀ഀഀ
+[DWD] Client ID: 109513305809334094254
+਍嬀䐀圀䐀崀 䘀椀氀氀攀搀 䌀氀椀攀渀琀 䤀䐀ഀഀ
+[DWD] Filled Scopes
+਍嬀䐀圀䐀崀 䐀漀洀愀椀渀ⴀ圀椀搀攀 䐀攀氀攀最愀琀椀漀渀 愀搀搀攀搀 猀甀挀挀攀猀猀昀甀氀氀礀℀ഀഀ
+[DWD] Screenshot saved: C:\Users\Tyler\OneDrive\Desktop\Appoussama\createWorkspaceAccount\dwd-success-1770488442245.png
+਍嬀䤀一䘀崀 嬀㈀　㈀㘀ⴀ　㈀ⴀ　㜀吀㄀㠀㨀㈀　㨀㐀㈀⸀㠀㌀㔀娀崀 䐀漀洀愀椀渀ⴀ圀椀搀攀 䐀攀氀攀最愀琀椀漀渀 挀漀渀昀椀最甀爀攀搀 猀甀挀挀攀猀猀昀甀氀氀礀 ഀഀ
+[INF] [2026-02-07T18:20:42.836Z] Workspace Prep Complete for contact-getsmart-w68z3 
+਍嬀䤀一䘀崀 嬀㈀　㈀㘀ⴀ　㈀ⴀ　㜀吀㄀㠀㨀㈀　㨀㐀㈀⸀㠀㐀㄀娀崀 䨀漀戀 ㄀㘀 挀漀洀瀀氀攀琀攀搀℀ ഀഀ

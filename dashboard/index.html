@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workspace Automation Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1 class="logo">
+                    <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                        <rect width="32" height="32" rx="8" fill="url(#gradient)"/>
+                        <path d="M16 8L24 16L16 24L8 16L16 8Z" fill="white"/>
+                        <defs>
+                            <linearGradient id="gradient" x1="0" y1="0" x2="32" y2="32">
+                                <stop offset="0%" stop-color="#667eea"/>
+                                <stop offset="100%" stop-color="#764ba2"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                    Workspace Automation
+                </h1>
+                <div class="header-actions">
+                    <div class="status-indicator">
+                        <span class="status-dot"></span>
+                        <span id="worker-status">Worker: Checking...</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Stats Cards -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M2 17L12 22L22 17" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M2 12L12 17L22 12" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-label">Total Jobs</div>
+                        <div class="stat-value" id="total-jobs">0</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                            <path d="M12 6V12L16 14" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-label">Processing</div>
+                        <div class="stat-value" id="processing-jobs">0</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <polyline points="22 4 12 14.01 9 11.01" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-label">Completed</div>
+                        <div class="stat-value" id="completed-jobs">0</div>
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                            <line x1="15" y1="9" x2="9" y2="15" stroke-width="2" stroke-linecap="round"/>
+                            <line x1="9" y1="9" x2="15" y2="15" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-label">Failed</div>
+                        <div class="stat-value" id="failed-jobs">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Tabs -->
+            <div class="tabs">
+                <button class="tab active" data-tab="create">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <line x1="12" y1="5" x2="12" y2="19" stroke-width="2" stroke-linecap="round"/>
+                        <line x1="5" y1="12" x2="19" y2="12" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    Create Accounts
+                </button>
+                <button class="tab" data-tab="templates">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke-width="2"/>
+                        <polyline points="14 2 14 8 20 8" stroke-width="2"/>
+                    </svg>
+                    Templates
+                </button>
+                <button class="tab" data-tab="monitor">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <rect x="2" y="3" width="20" height="14" rx="2" stroke-width="2"/>
+                        <line x1="8" y1="21" x2="16" y2="21" stroke-width="2" stroke-linecap="round"/>
+                        <line x1="12" y1="17" x2="12" y2="21" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    Monitor
+                </button>
+            </div>
+
+            <!-- Tab Content -->
+            <div class="tab-content active" id="create-tab">
+                <div class="card">
+                    <h2 class="card-title">Create Workspace Accounts</h2>
+                    <p class="card-description">Upload accounts file or enter accounts manually</p>
+                    
+                    <div class="form-group">
+                        <label class="label">Upload Accounts File</label>
+                        <div class="file-upload">
+                            <input type="file" id="accounts-file" accept=".txt" hidden>
+                            <button class="btn-upload" onclick="document.getElementById('accounts-file').click()">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <polyline points="17 8 12 3 7 8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <line x1="12" y1="3" x2="12" y2="15" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                Choose File
+                            </button>
+                            <span id="file-name" class="file-name">No file chosen</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="label">Or Enter Accounts Manually</label>
+                        <textarea id="accounts-textarea" class="textarea" placeholder="email@domain.com:password&#10;another@domain.com:password" rows="6"></textarea>
+                        <div class="help-text">Format: email:password (one per line)</div>
+                    </div>
+
+                    <div class="button-group">
+                        <button class="btn btn-primary" id="start-btn">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <polygon points="5 3 19 12 5 21 5 3" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            Start Processing
+                        </button>
+                        <button class="btn btn-secondary" id="clear-btn">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <polyline points="3 6 5 6 21 6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" stroke-width="2"/>
+                            </svg>
+                            Clear
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="templates-tab">
+                <div class="card">
+                    <h2 class="card-title">Account Templates</h2>
+                    <p class="card-description">Preview and select templates for account creation</p>
+                    
+                    <div class="templates-grid">
+                        <div class="template-card" data-template="education">
+                            <div class="template-header">
+                                <div class="template-icon" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                        <path d="M22 10v6M2 10l10-5 10 5-10 5z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        <path d="M6 12v5c3 3 9 3 12 0v-5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                </div>
+                                <h3 class="template-title">Education Template</h3>
+                            </div>
+                            <div class="template-body">
+                                <div class="template-field">
+                                    <span class="field-label">Education Level:</span>
+                                    <span class="field-value">Higher education</span>
+                                </div>
+                                <div class="template-field">
+                                    <span class="field-label">Students:</span>
+                                    <span class="field-value">Random (1-10000+)</span>
+                                </div>
+                                <div class="template-field">
+                                    <span class="field-label">Features:</span>
+                                    <span class="field-value">Auto-fill, Random data</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-template" onclick="applyTemplate('education')">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <polyline points="20 6 9 17 4 12" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                Apply Template
+                            </button>
+                        </div>
+
+                        <div class="template-card" data-template="business">
+                            <div class="template-header">
+                                <div class="template-icon" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                        <rect x="2" y="7" width="20" height="14" rx="2" stroke-width="2"/>
+                                        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" stroke-width="2"/>
+                                    </svg>
+                                </div>
+                                <h3 class="template-title">Business Template</h3>
+                            </div>
+                            <div class="template-body">
+                                <div class="template-field">
+                                    <span class="field-label">Type:</span>
+                                    <span class="field-value">Professional</span>
+                                </div>
+                                <div class="template-field">
+                                    <span class="field-label">Features:</span>
+                                    <span class="field-value">Custom branding</span>
+                                </div>
+                                <div class="template-field">
+                                    <span class="field-label">Status:</span>
+                                    <span class="field-value badge-coming">Coming Soon</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-template" disabled>
+                                Coming Soon
+                            </button>
+                        </div>
+
+                        <div class="template-card" data-template="custom">
+                            <div class="template-header">
+                                <div class="template-icon" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                        <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                </div>
+                                <h3 class="template-title">Custom Template</h3>
+                            </div>
+                            <div class="template-body">
+                                <div class="template-field">
+                                    <span class="field-label">Type:</span>
+                                    <span class="field-value">Fully customizable</span>
+                                </div>
+                                <div class="template-field">
+                                    <span class="field-label">Features:</span>
+                                    <span class="field-value">All options</span>
+                                </div>
+                                <div class="template-field">
+                                    <span class="field-label">Status:</span>
+                                    <span class="field-value badge-coming">Coming Soon</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-template" disabled>
+                                Coming Soon
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="monitor-tab">
+                <div class="card">
+                    <h2 class="card-title">Job Monitor</h2>
+                    <p class="card-description">Real-time job status and logs</p>
+                    
+                    <div class="monitor-controls">
+                        <button class="btn btn-secondary" id="refresh-btn">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <polyline points="23 4 23 10 17 10" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
+
+                    <div class="jobs-list" id="jobs-list">
+                        <div class="empty-state">
+                            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" opacity="0.3">
+                                <circle cx="12" cy="12" r="10" stroke-width="2"/>
+                                <line x1="12" y1="8" x2="12" y2="12" stroke-width="2" stroke-linecap="round"/>
+                                <line x1="12" y1="16" x2="12.01" y2="16" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                            <p>No jobs yet. Start processing to see jobs here.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

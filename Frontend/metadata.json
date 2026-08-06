@@ -1,0 +1,5 @@
+{
+  "name": "Nexus Account Manager",
+  "description": "A high-performance dashboard for managing, verifying, and monitoring account credentials with integrated proxy and headless configurations.",
+  "requestFramePermissions": []
+}
