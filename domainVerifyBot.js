@@ -24,6 +24,29 @@ const CODES_URL = (domain) =>
 
 const CHECKBOX_PHRASE = 'come back here and confirm';
 
+// ── Classify login failures from the visible page text ────────────────────────
+function detectLoginError(text) {
+    const t = (text || '').toLowerCase();
+    if (t.includes("couldn't find your google account") ||
+        t.includes("could not find your google account") ||
+        t.includes("no google account found") ||
+        t.includes('enter a valid email') ||
+        t.includes('this account was recently deleted')) return 'ACCOUNT_NOT_FOUND';
+    if (t.includes("prove you're not a robot") ||
+        t.includes('enter the text you hear or see') ||
+        t.includes('unusual traffic')) return 'CAPTCHA_BLOCKED';
+    if (t.includes('wrong password') ||
+        t.includes("couldn't sign you in") ||
+        t.includes('incorrect password') ||
+        t.includes('password is incorrect')) return 'WRONG_PASSWORD';
+    if (t.includes('enter the code shown on your phone') ||
+        t.includes('phone number to verify') ||
+        t.includes('verify your identity with your phone')) return 'PHONE_VERIFICATION_REQUIRED';
+    if (t.includes('this browser or app may not be secure') ||
+        t.includes('browser or app may not be secure')) return 'UNSAFE_BROWSER';
+    return null;
+}
+
 // ── Launch browser ─────────────────────────────────────────────────────────────
 export async function launchBrowser(proxy = null) {
     const args = [
@@ -54,7 +77,7 @@ export async function googleLogin(browser, email, password, log = () => {}) {
     await page.setRequestInterception(true);
     page.on('request', (req) => {
         const t = req.resourceType();
-        if (['image', 'stylesheet', 'font', 'media'].includes(t)) req.abort();
+        if (['image', 'font', 'media'].includes(t)) req.abort();
         else req.continue();
     });
 
@@ -65,89 +88,102 @@ export async function googleLogin(browser, email, password, log = () => {}) {
 
     log(`[Login] Opening Google sign-in for ${email}`);
     await page.goto(
-        'https://accounts.google.com/v3/signin/identifier?hl=en&flowName=GlifWebSignIn',
-        { waitUntil: 'domcontentloaded', timeout: 45000 }
+        'https://accounts.google.com/signin/v2/identifier?hl=en&flowName=GlifWebSignIn&flowEntry=ServiceLogin',
+        { waitUntil: 'networkidle2', timeout: 60000 }
     );
-    await sleep(1200);
 
     // Email
     const emailEl = await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { visible: true, timeout: 30000 });
+    if (!emailEl) throw new Error('Email input not found');
     await emailEl.click({ clickCount: 3 });
     await page.keyboard.press('Backspace');
-    await emailEl.type(email, { delay: 12 });
-    await sleep(200);
-    await emailEl.press('Enter').catch(() => page.keyboard.press('Enter'));
-    await sleep(3000);
+    await emailEl.type(email, { delay: 25 });
+    await sleep(400);
+    await page.keyboard.press('Enter');
+    await sleep(2500);
+
+    // Race: password page / captcha / account-not-found
+    const resp = await Promise.race([
+        page.waitForSelector('input[type="password"]', { visible: true, timeout: 12000 }).then(() => 'password'),
+        page.waitForSelector('input[name="ca"], input[aria-label*="captcha" i]', { visible: true, timeout: 12000 }).then(() => 'captcha'),
+        page.waitForFunction(() => {
+            const t = document.body.innerText.toLowerCase();
+            return t.includes("couldn't find your google account") ||
+                   t.includes('no google account found') ||
+                   t.includes('this account was recently deleted');
+        }, { timeout: 12000 }).then(() => 'not_found'),
+    ]).catch(() => 'timeout');
+
+    if (resp === 'not_found') throw new Error('ACCOUNT_NOT_FOUND');
+    if (resp === 'captcha') throw new Error('CAPTCHA_BLOCKED');
 
     // Password (may be skipped if remembered / already logged in)
-    let pwEl = null;
-    try {
-        pwEl = await page.waitForSelector('input[type="password"]', { visible: true, timeout: 18000 });
-    } catch (e) { /* password not requested */ }
-
+    let pwEl = resp === 'password' ? await page.$('input[type="password"]') : null;
     if (pwEl) {
         await pwEl.click({ clickCount: 3 });
         await page.keyboard.press('Backspace');
-        await pwEl.type(password, { delay: 12 });
-        await sleep(200);
-        await pwEl.press('Enter').catch(() => page.keyboard.press('Enter'));
-        await sleep(3000);
+        await pwEl.type(password, { delay: 25 });
+        await sleep(400);
+        await page.keyboard.press('Enter');
+        await sleep(3500);
+    } else {
+        log(`[Login] No password field appeared for ${email} (${resp})`);
     }
+
+    // Surface any error shown right after submit
+    let bodyText = await page.evaluate(() => document.body.innerText).catch(() => '');
+    let err = detectLoginError(bodyText);
+    if (err) throw new Error(err);
 
     // TOTP / Authenticator challenge
     for (let i = 0; i < 3; i++) {
         const otpInput = await page.$('input[name="totpPin"], input[id*="totp"], input[id*="otp"], input[type="tel"]').catch(() => null);
         if (!otpInput) break;
-        const isTOTP = await page.evaluate(() => {
-            const t = document.body.innerText.toLowerCase();
-            return t.includes('google authenticator') || t.includes('get a verification code') || !!document.querySelector('input[name="totpPin"]');
-        }).catch(() => false);
+        const url = page.url();
+        const isTOTP = url.includes('/challenge/totp') || url.includes('/challenge/iap') || url.includes('/challenge/ipp') ||
+            await page.evaluate(() => {
+                const t = document.body.innerText.toLowerCase();
+                return t.includes('google authenticator') || t.includes('get a verification code') || t.includes('enter your verification code');
+            }).catch(() => false);
+        if (!isTOTP) break;
 
-        if (isTOTP) {
-            log(`[Login] TOTP requested for ${email}`);
-            let otpCode = null;
-            try {
-                otpCode = await genOtp.getOTPForAccount(email);
-            } catch (otpErr) {
-                log(`[Login] OTP generation failed: ${otpErr.message}`);
-            }
-            if (otpCode) {
-                const inp = await page.waitForSelector('input[name="totpPin"], input[id*="totp"], input[type="tel"]', { visible: true, timeout: 5000 }).catch(() => otpInput);
-                await inp.click({ clickCount: 3 });
-                await page.keyboard.press('Backspace');
-                await inp.type(otpCode, { delay: 20 });
-                await sleep(400);
-                await inp.press('Enter').catch(() => page.keyboard.press('Enter'));
-                await sleep(2500);
-                continue;
-            }
+        log(`[Login] TOTP requested for ${email}`);
+        let otpCode = null;
+        try {
+            otpCode = await genOtp.getOTPForAccount(email);
+        } catch (otpErr) {
+            log(`[Login] OTP generation failed: ${otpErr.message}`);
         }
-        break;
+        if (otpCode) {
+            await otpInput.click({ clickCount: 3 });
+            await page.keyboard.press('Backspace');
+            await otpInput.type(String(otpCode), { delay: 30 });
+            await sleep(500);
+            await page.keyboard.press('Enter');
+            await sleep(3000);
+        } else {
+            throw new Error('TOTP_REQUIRED_NO_SECRET: account uses Google Authenticator but no OTP secret is available');
+        }
     }
 
+    // Wait for login to complete: URL must leave accounts.google.com
+    let finalUrl = page.url();
     try {
-        await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 });
-    } catch (e) { /* might not fire */ }
-    await sleep(1500);
+        await page.waitForFunction(() => !window.location.href.includes('accounts.google.com'), { timeout: 15000 });
+        finalUrl = page.url();
+    } catch (e) { /* still on google */ }
 
-    const url = page.url();
-    log(`[Login] After login URL: ${url}`);
+    bodyText = await page.evaluate(() => document.body.innerText).catch(() => '');
+    err = detectLoginError(bodyText);
+    if (err) throw new Error(err);
 
-    const pageText = await page.evaluate(() => document.body.innerText.toLowerCase()).catch(() => '');
-    if (pageText.includes("couldn't find your google account") ||
-        pageText.includes("could not find your google account") ||
-        pageText.includes("no google account found") ||
-        pageText.includes("enter a valid email") ||
-        pageText.includes("this account was recently deleted")) {
-        throw new Error('ACCOUNT_NOT_FOUND');
-    }
-    if (pageText.includes("prove you're not a robot") || pageText.includes('enter the text you hear or see')) {
-        throw new Error('CAPTCHA_BLOCKED');
-    }
-    if (pageText.includes('enter the code shown on your phone') || pageText.includes('phone number to verify')) {
-        throw new Error('PHONE_VERIFICATION_REQUIRED');
+    if (finalUrl.includes('accounts.google.com')) {
+        const snippet = bodyText.replace(/\n+/g, ' ').substring(0, 220);
+        log(`[Login] Did not finish login. URL: ${finalUrl}. Text: ${snippet}`);
+        throw new Error('LOGIN_FAILED');
     }
 
+    log(`[Login] Logged in as ${email} (${finalUrl})`);
     return page;
 }
 
