@@ -22,6 +22,28 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Retry-safe click+type: re-queries the selector if the node detaches mid-click
+// (common under concurrency — "Node is either not clickable or not an Element").
+async function safeLoginType(page, selector, text, label, log = () => {}) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const el = await page.waitForSelector(selector, { visible: true, timeout: 15000 }).catch(() => null);
+        if (!el) {
+            log(`[Login] ${label} input not found`);
+            return false;
+        }
+        try {
+            await el.click({ clickCount: 3 });
+            await page.keyboard.press('Backspace');
+            await el.type(text, { delay: 25 });
+            return true;
+        } catch (e) {
+            log(`[Login] ${label} interaction failed (${e.message}) — retrying…`);
+            await sleep(1500);
+        }
+    }
+    return false;
+}
+
 const CODES_URL = (domain, cid = '00tkujf8') =>
     `https://workspace.google.com/u/0/getsetup/domain/verification/codes?cid=${cid}&domain=${encodeURIComponent(domain)}&continue_url=https%3A%2F%2Fadmin.google.com%2Fac%2Fdomains%2Fmanage%3Futm_source%3Dog_am&origin=ac_manage_domains`;
 
@@ -94,9 +116,7 @@ export async function googleLogin(browser, email, password, log = () => {}) {
     // Email
     const emailEl = await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { visible: true, timeout: 30000 });
     if (!emailEl) throw new Error('Email input not found');
-    await emailEl.click({ clickCount: 3 });
-    await page.keyboard.press('Backspace');
-    await emailEl.type(email, { delay: 25 });
+    await safeLoginType(page, 'input[type="email"], input[name="identifier"], #identifierId', email, 'email', log);
     await sleep(400);
     await page.keyboard.press('Enter');
     await sleep(2500);
@@ -136,9 +156,7 @@ export async function googleLogin(browser, email, password, log = () => {}) {
     if (!pwEl) pwEl = await page.waitForSelector('input[type="password"]', { visible: true, timeout: 8000 }).catch(() => null);
 
     if (pwEl) {
-        await pwEl.click({ clickCount: 3 });
-        await page.keyboard.press('Backspace');
-        await pwEl.type(password, { delay: 25 });
+        await safeLoginType(page, 'input[type="password"]', password, 'password', log);
         await sleep(400);
         await page.keyboard.press('Enter');
         await sleep(3500);
@@ -159,8 +177,11 @@ export async function googleLogin(browser, email, password, log = () => {}) {
     if (err) throw new Error(err);
 
     // TOTP / Authenticator challenge
+    const OTP_SELECTOR = 'input[name="totpPin"], input[id*="totp"], input[id*="otp"], input[type="tel"]';
     for (let i = 0; i < 3; i++) {
-        const otpInput = await page.$('input[name="totpPin"], input[id*="totp"], input[id*="otp"], input[type="tel"]').catch(() => null);
+        // Wait for the input to actually render — the 2-Step page loads it
+        // asynchronously, so a one-shot page.$ can miss it (LOGIN_FAILED).
+        const otpInput = await page.waitForSelector(OTP_SELECTOR, { visible: true, timeout: 15000 }).catch(() => null);
         if (!otpInput) break;
         const url = page.url();
         const isTOTP = url.includes('/challenge/totp') || url.includes('/challenge/iap') || url.includes('/challenge/ipp') ||
@@ -178,9 +199,7 @@ export async function googleLogin(browser, email, password, log = () => {}) {
             log(`[Login] OTP generation failed: ${otpErr.message}`);
         }
         if (otpCode) {
-            await otpInput.click({ clickCount: 3 });
-            await page.keyboard.press('Backspace');
-            await otpInput.type(String(otpCode), { delay: 30 });
+            await safeLoginType(page, OTP_SELECTOR, String(otpCode), 'OTP', log);
             await sleep(500);
             await page.keyboard.press('Enter');
             await sleep(3000);
@@ -458,7 +477,10 @@ async function waitForDomainVerified(keyData, adminEmail, domain, timeoutMs, log
 // Opens https://admin.google.com/u/0/ac/domains/manage, presses the "Verify"
 // action for the domain, and reads the `cid` from the resulting getsetup URL.
 // The cid always looks like `cid=01n26agf` (starts with cid=, ends with &).
+// On some accounts the Verify action opens the flow in a NEW TAB instead of
+// navigating the current one — both are handled here.
 async function getCidForDomain(page, domain, log = () => {}) {
+    const browser = page.browser();
     const MANAGE_URL = 'https://admin.google.com/u/0/ac/domains/manage';
     log(`[Verify] Opening Admin Console domains page for ${domain}…`);
     await page.goto(MANAGE_URL, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
@@ -468,6 +490,17 @@ async function getCidForDomain(page, domain, log = () => {}) {
         log(`[Verify] Admin Console bounced to login — session lost (${page.url()})`);
         return null;
     }
+
+    // Hook popups BEFORE clicking: the verification flow may open a new tab
+    const popupPromise = new Promise((resolve) => {
+        const handler = async (target) => {
+            if (target.type() !== 'page') return;
+            const p = await target.page().catch(() => null);
+            if (p) resolve(p);
+        };
+        browser.on('targetcreated', handler);
+        setTimeout(() => { browser.off('targetcreated', handler); resolve(null); }, 25000);
+    });
 
     const clicked = await page.evaluate((domain) => {
         const text = (el) => (el.textContent || '').trim().toLowerCase();
@@ -496,17 +529,24 @@ async function getCidForDomain(page, domain, log = () => {}) {
     }
     log(`[Verify] Clicked "${clicked.label}" for ${domain}`);
 
+    // Wait a moment for a possible popup, else assume in-page navigation
+    const popup = await Promise.race([popupPromise, sleep(2500).then(() => null)]);
+    const cidPage = popup || page;
+    if (popup) log(`[Verify] Verification flow opened in a new tab`);
+
     // Wait for the getsetup URL and extract the cid
     for (let i = 0; i < 12; i++) {
         await sleep(1000);
-        const url = page.url();
+        const url = cidPage.url();
         const m = url.match(/[?&]cid=([A-Za-z0-9_-]+)/);
         if (m) {
             log(`[Verify] Extracted cid=${m[1]} (${url.substring(0, 110)}…)`);
+            if (popup) await popup.close().catch(() => {});
             return m[1];
         }
         if (i === 11) log(`[Verify] No cid found in URL: ${url.substring(0, 160)}`);
     }
+    if (popup) await popup.close().catch(() => {});
     return null;
 }
 
@@ -524,7 +564,10 @@ async function verifyDomainOnPage(page, domain, keyData, adminEmail, log = () =>
         const hasPhrase = txt.includes('come back here and confirm') ||
                           txt.includes('verification code') ||
                           txt.includes('txt record') ||
-                          txt.includes('google-site-verification');
+                          txt.includes('google-site-verification') ||
+                          txt.includes('copy the below code') ||
+                          txt.includes('add verification code') ||
+                          txt.includes('domain name service');
         const hasBtn = Array.from(document.querySelectorAll('button, [role="button"]')).some(b => {
             const t = (b.innerText || '').toLowerCase();
             return (t.includes('verify') || t.includes('confirm') || t.includes('continue')) && b.offsetParent !== null;
@@ -589,19 +632,32 @@ export async function verifyUnverifiedDomains(account, opts = {}) {
         const page = await googleLogin(browser, email, password, log);
         log(`[Account] Logged in as ${email}`);
 
+        // cid is per-account (constant across all of an account's domains), so
+        // fetch it once and reuse — avoids re-opening the Admin Console for
+        // every domain, which was the main cause of slowness.
+        let cid = null;
+
         for (const domain of unverifiedDomains) {
             if (shouldStop()) {
                 log(`[Account] Stop requested — skipping remaining domains`);
                 results.push({ domain, status: 'skipped', error: 'Stopped by user' });
                 break;
             }
-            const cid = await getCidForDomain(page, domain, log);
             if (!cid) {
-                log(`[Account] Could not obtain cid for ${domain}`);
-                results.push({ domain, status: 'error', error: 'Could not obtain cid from Admin Console (Verify action not found or no cid in URL)' });
-                continue;
+                cid = await getCidForDomain(page, domain, log);
+                if (!cid) {
+                    log(`[Account] Could not obtain cid for ${domain}`);
+                    results.push({ domain, status: 'error', error: 'Could not obtain cid from Admin Console (Verify action not found or no cid in URL)' });
+                    continue;
+                }
             }
-            const r = await verifyDomainOnPage(page, domain, keyData, adminEmail, log, shouldStop, cid);
+            let r = await verifyDomainOnPage(page, domain, keyData, adminEmail, log, shouldStop, cid);
+            if (r.status === 'error' && r.error.includes('No verification controls')) {
+                // Stale/wrong cid (e.g. codes page 403'd) — re-fetch once
+                log(`[Account] Codes page rejected cid for ${domain} — re-fetching from Admin Console…`);
+                cid = await getCidForDomain(page, domain, log);
+                if (cid) r = await verifyDomainOnPage(page, domain, keyData, adminEmail, log, shouldStop, cid);
+            }
             results.push(r);
         }
 
