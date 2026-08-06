@@ -2874,6 +2874,10 @@ async function getUnverifiedDomains(adminEmail, keyData, log = () => {}) {
 }
 
 async function runDomainVerifyJob(job) {
+    const pushLog = (m) => {
+        job.logs.push(m);
+        console.log(`[DomainVerify] ${m}`);
+    };
     for (let i = 0; i < job.entries.length; i++) {
         if (job.stopRequested) { job.status = 'stopped'; break; }
 
@@ -2882,13 +2886,13 @@ async function runDomainVerifyJob(job) {
         const accResult = { adminEmail: entry.adminEmail, domains: [], error: null };
 
         try {
-            job.logs.push(`[${entry.adminEmail}] Starting…`);
+            pushLog(`[${entry.adminEmail}] Starting…`);
             const keyData = await getKeyData(entry.adminEmail);
-            const unverified = await getUnverifiedDomains(entry.adminEmail, keyData, (m) => job.logs.push(m));
+            const unverified = await getUnverifiedDomains(entry.adminEmail, keyData, pushLog);
 
             if (unverified.length === 0) {
                 accResult.note = 'No unverified domains found';
-                job.logs.push(`[${entry.adminEmail}] No unverified domains`);
+                pushLog(`[${entry.adminEmail}] No unverified domains`);
             } else {
                 const password = entry.password || lookupAccountPassword(entry.adminEmail);
                 const botRes = await runDomainVerifyBot(
@@ -2897,17 +2901,17 @@ async function runDomainVerifyJob(job) {
                         adminEmail: entry.adminEmail,
                         unverifiedDomains: unverified,
                         keyData,
-                        log: (m) => job.logs.push(m),
+                        log: pushLog,
                         shouldStop: () => job.stopRequested
                     }
                 );
                 accResult.domains = botRes.results || [];
                 if (botRes.error) accResult.error = botRes.error;
-                job.logs.push(`[${entry.adminEmail}] Done — ${accResult.domains.filter(d => d.status === 'verified').length}/${accResult.domains.length} verified`);
+                pushLog(`[${entry.adminEmail}] Done — ${accResult.domains.filter(d => d.status === 'verified').length}/${accResult.domains.length} verified`);
             }
         } catch (e) {
             accResult.error = e.message;
-            job.logs.push(`[${entry.adminEmail}] Error: ${e.message}`);
+            pushLog(`[${entry.adminEmail}] Error: ${e.message}`);
         }
         job.results.push(accResult);
     }
