@@ -427,8 +427,21 @@ const ManageAccounts: React.FC = () => {
     // ── Domain Verification (bulk) ──────────────────────────────────────────────
     const handleStartDomainVerify = async () => {
         if (!bulkInfoResults) { toast('Load Bulk Info first', 'err'); return; }
-        const emails = Object.keys(bulkInfoResults);
-        if (emails.length === 0) { toast('No accounts loaded — click "Bulk Load Info" first', 'err'); return; }
+        const all = Object.keys(bulkInfoResults);
+        if (all.length === 0) { toast('No accounts loaded — click "Bulk Load Info" first', 'err'); return; }
+        // Only trigger on accounts that actually have unverified domains — skip
+        // accounts where every domain is already verified (no login needed).
+        const emails = all.filter(email => {
+            const d = bulkInfoResults[email];
+            if (!d || d.error) return true; // unknown → let the server check
+            if (!Array.isArray(d.domains)) return true;
+            return d.domains.some((dom: any) => !dom.verified);
+        });
+        const skipped = all.length - emails.length;
+        if (emails.length === 0) {
+            toast('All domains are already verified — nothing to verify', 'info');
+            return;
+        }
         const entries = emails.map(email => {
             const acc = accounts.find(a => a.email === email);
             return { adminEmail: email, password: acc?.password || undefined };
@@ -445,7 +458,9 @@ const ManageAccounts: React.FC = () => {
             const data = await res.json();
             if (data.success) {
                 setDomainVerifyJobId(data.jobId);
-                toast(`Started domain verification for ${emails.length} account(s)`, 'ok');
+                toast(skipped > 0
+                    ? `Verifying ${emails.length} account(s) with unverified domains (${skipped} already fully verified skipped)`
+                    : `Started domain verification for ${emails.length} account(s)`, 'ok');
             } else {
                 toast(data.error || 'Failed to start', 'err');
                 setDomainVerifyLoading(false);

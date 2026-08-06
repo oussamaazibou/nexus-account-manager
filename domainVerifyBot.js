@@ -628,6 +628,13 @@ export async function verifyUnverifiedDomains(account, opts = {}) {
         log(`[Account] ${email} — ${unverifiedDomains.length} unverified domain(s)`);
         if (!password) throw new Error('No password available for account');
 
+        // Never launch a browser / log in for an account with no unverified
+        // domains — return immediately so fully-verified accounts are skipped.
+        if (unverifiedDomains.length === 0) {
+            log(`[Account] No unverified domains — skipping login`);
+            return { email, results, note: 'No unverified domains found' };
+        }
+
         browser = await launchBrowser(proxy);
 
         // Retry the login (fresh page each attempt) — transient failures like
