@@ -78,6 +78,14 @@ const ManageAccounts: React.FC = () => {
     const [bulkInfoResults, setBulkInfoResults] = useState<{ [email: string]: any } | null>(null);
     const [bulkInfoLoading, setBulkInfoLoading] = useState(false);
 
+    // Domain Verification (bulk, via Workspace UI session) state
+    const [domainVerifyJobId, setDomainVerifyJobId] = useState<string | null>(null);
+    const [domainVerifyState, setDomainVerifyState] = useState<any>(null);
+    const [domainVerifyConcurrency, setDomainVerifyConcurrency] = useState<number>(2);
+    const [domainVerifyLoading, setDomainVerifyLoading] = useState(false);
+    const [domainVerifyEmails, setDomainVerifyEmails] = useState<string[]>([]);
+    const [domainVerifyRetrying, setDomainVerifyRetrying] = useState<string | null>(null);
+
     // Bulk Ops tab
     const [bulkAddDomainText, setBulkAddDomainText] = useState('');
     const [bulkAddDomainResults, setBulkAddDomainResults] = useState<{adminEmail:string; domainName:string; status:string; error?:string}[]>([]);
@@ -415,6 +423,136 @@ const ManageAccounts: React.FC = () => {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     };
+
+    // ── Domain Verification (bulk) ──────────────────────────────────────────────
+    const handleStartDomainVerify = async () => {
+        if (!bulkInfoResults) { toast('Load Bulk Info first', 'err'); return; }
+        const all = Object.keys(bulkInfoResults);
+        if (all.length === 0) { toast('No accounts loaded — click "Bulk Load Info" first', 'err'); return; }
+        // Only trigger on accounts that actually have unverified domains — skip
+        // accounts where every domain is already verified (no login needed).
+        const emails = all.filter(email => {
+            const d = bulkInfoResults[email];
+            if (!d || d.error) return true; // unknown → let the server check
+            if (!Array.isArray(d.domains)) return true;
+            return d.domains.some((dom: any) => !dom.verified);
+        });
+        const skipped = all.length - emails.length;
+        if (emails.length === 0) {
+            toast('All domains are already verified — nothing to verify', 'info');
+            return;
+        }
+        const entries = emails.map(email => {
+            const acc = accounts.find(a => a.email === email);
+            return { adminEmail: email, password: acc?.password || undefined };
+        });
+        setDomainVerifyEmails(emails);
+        setDomainVerifyState(null);
+        setDomainVerifyLoading(true);
+        try {
+            const res = await fetch(`${API_URL}/manage/domain-verify/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entries, concurrency: domainVerifyConcurrency })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setDomainVerifyJobId(data.jobId);
+                toast(skipped > 0
+                    ? `Verifying ${emails.length} account(s) with unverified domains (${skipped} already fully verified skipped)`
+                    : `Started domain verification for ${emails.length} account(s)`, 'ok');
+            } else {
+                toast(data.error || 'Failed to start', 'err');
+                setDomainVerifyLoading(false);
+            }
+        } catch (e: any) {
+            toast('Error: ' + e.message, 'err');
+            setDomainVerifyLoading(false);
+        }
+    };
+
+    const handleStopDomainVerify = async () => {
+        if (!domainVerifyJobId) return;
+        try {
+            await fetch(`${API_URL}/manage/domain-verify/stop`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jobId: domainVerifyJobId })
+            });
+            toast('Stop requested…', 'info');
+        } catch (e: any) {
+            toast('Error: ' + e.message, 'err');
+        }
+    };
+
+    // Retry a single failed account (LOGIN_FAILED / other transient errors)
+    const handleRetryDomainVerify = async (adminEmail: string) => {
+        setDomainVerifyRetrying(adminEmail);
+        try {
+            const acc = accounts.find(a => a.email === adminEmail);
+            const res = await fetch(`${API_URL}/manage/domain-verify/retry-one`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ adminEmail, password: acc?.password || undefined })
+            });
+            const data = await res.json();
+            if (data.success && data.result) {
+                const r = data.result;
+                const ok = (r.domains || []).filter((d: any) => d.status === 'verified').length;
+                toast(`Retry ${adminEmail}: ${ok}/${(r.domains || []).length} verified`, ok === (r.domains || []).length && (r.domains || []).length > 0 ? 'ok' : 'err');
+                setDomainVerifyState((prev: any) => {
+                    if (!prev) return prev;
+                    const idx = (prev.results || []).findIndex((x: any) => x.adminEmail === adminEmail);
+                    const results = (prev.results || []).slice();
+                    if (idx >= 0) results[idx] = r; else results.push(r);
+                    return { ...prev, results };
+                });
+            } else {
+                toast(data.error || `Retry ${adminEmail} failed`, 'err');
+            }
+        } catch (e: any) {
+            toast('Error: ' + e.message, 'err');
+        } finally {
+            setDomainVerifyRetrying(null);
+        }
+    };
+
+    // Poll job status while running, then refresh bulk info once finished
+    useEffect(() => {
+        if (!domainVerifyJobId) return;
+        let finished = false;
+        const iv = setInterval(async () => {
+            try {
+                const res = await fetch(`${API_URL}/manage/domain-verify/status?jobId=${encodeURIComponent(domainVerifyJobId)}`);
+                const data = await res.json();
+                if (data.status) setDomainVerifyState(data);
+                if (data.status === 'completed' || data.status === 'stopped' || data.status === 'failed') {
+                    if (finished) return;
+                    finished = true;
+                    clearInterval(iv);
+                    setDomainVerifyLoading(false);
+                    setDomainVerifyJobId(null);
+                    const emails = domainVerifyEmails;
+                    if (data.status === 'completed' && emails.length > 0) {
+                        toast('Domain verification finished', 'ok');
+                        try {
+                            const r = await fetch(`${API_URL}/manage/workspace-info-bulk`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ emails })
+                            });
+                            const d = await r.json();
+                            if (d.results) setBulkInfoResults(d.results);
+                        } catch (e) { /* ignore */ }
+                    } else {
+                        toast('Domain verification stopped', 'info');
+                    }
+                }
+            } catch (e) { /* ignore */ }
+        }, 2000);
+        return () => clearInterval(iv);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [domainVerifyJobId]);
 
     const handleAddDomain = async () => {
         if (!selectedAccount || !adminEmail || !newDomain.trim()) return;
@@ -1083,6 +1221,25 @@ const ManageAccounts: React.FC = () => {
                                                 <button onClick={handleDownloadBulkUsers} disabled={!bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500 hover:text-white text-sm font-bold transition-all shrink-0">
                                                     💾 Download Users
                                                 </button>
+                                                <div className="flex items-center gap-1.5 bg-black/30 border border-white/10 rounded-xl px-2 py-1.5 shrink-0">
+                                                    <span className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-wider leading-none">Accounts<br/>at once</span>
+                                                    <div className="flex items-center gap-1">
+                                                        <button onClick={() => setDomainVerifyConcurrency(c => Math.max(1, c - 1))} disabled={domainVerifyLoading} className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-black leading-none disabled:opacity-40">−</button>
+                                                        <input
+                                                            type="number"
+                                                            min={1}
+                                                            max={10}
+                                                            value={domainVerifyConcurrency}
+                                                            disabled={domainVerifyLoading}
+                                                            onChange={e => setDomainVerifyConcurrency(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                                                            className="w-10 bg-black/40 border border-white/10 rounded-lg text-center text-sm font-black text-emerald-400 focus:outline-none focus:border-emerald-500"
+                                                        />
+                                                        <button onClick={() => setDomainVerifyConcurrency(c => Math.min(10, c + 1))} disabled={domainVerifyLoading} className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-black leading-none disabled:opacity-40">+</button>
+                                                    </div>
+                                                </div>
+                                                <button onClick={handleStartDomainVerify} disabled={domainVerifyLoading || !bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white text-sm font-bold transition-all shrink-0">
+                                                    {domainVerifyLoading ? '⏳ Verifying...' : '✅ Verify Unverified Domains'}
+                                                </button>
                                                 <button onClick={handleBulkDeleteSuspended} disabled={deletingBulkSuspended || !bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white text-sm font-bold transition-all shrink-0">
                                                     {deletingBulkSuspended ? '⏳ Deleting...' : '🗑 Suspandeds'}
                                                 </button>
@@ -1173,7 +1330,188 @@ const ManageAccounts: React.FC = () => {
                                                 )}
                                             </div>
                                         )}
-                                        
+
+                                        {/* Section: Verify Unverified Domains (Workspace UI session) */}
+                                        {domainVerifyState && (
+                                            <div className="space-y-3 border-t border-white/10 pt-5">
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div>
+                                                        <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">
+                                                            {domainVerifyState.status === 'running' ? '🔁 Verifying Unverified Domains…' : '✅ Domain Verification Finished'}
+                                                        </h3>
+                                                        {domainVerifyState.current && domainVerifyState.status === 'running' && (
+                                                            <p className="text-xs text-[var(--text-muted)] mt-1">
+                                                                Account {domainVerifyState.current.index}/{domainVerifyState.current.total} · <span className="font-mono">{domainVerifyState.current.adminEmail}</span>
+                                                                {domainVerifyState.concurrency && <span className="ml-2 text-emerald-400">⚡ {domainVerifyState.concurrency} concurrent</span>}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        {domainVerifyState.status === 'running' && (
+                                                            <button onClick={handleStopDomainVerify} className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white text-xs font-bold transition-all shrink-0">
+                                                                ⏹ Stop
+                                                            </button>
+                                                        )}
+                                                        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/5 text-[var(--text-muted)]">
+                                                            {(domainVerifyState.results || []).reduce((acc: number, r: any) => acc + (r.domains?.filter((d: any) => d.status === 'verified').length || 0), 0)} verified
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                {domainVerifyState.status !== 'running' && (() => {
+                                                    const stopped = domainVerifyState.status === 'stopped';
+                                                    const results = domainVerifyState.results || [];
+                                                    const verifiedDomains = results.flatMap((r: any) => r.domains || []).filter((d: any) => d.status === 'verified');
+                                                    const notVerifiedDomains = results.flatMap((r: any) => r.domains || []).filter((d: any) => d.status !== 'verified');
+                                                    const accountsProcessed = results.length;
+                                                    const accountsFullyVerified = results.filter((r: any) => !r.error && (r.domains || []).length > 0 && (r.domains || []).every((d: any) => d.status === 'verified'));
+                                                    const accountsWithIssues = results.filter((r: any) => r.error || (r.domains || []).some((d: any) => d.status !== 'verified'));
+                                                    const allDone = !stopped && accountsWithIssues.length === 0;
+                                                    return (
+                                                        <>
+                                                            <div className={`rounded-xl p-3 border ${allDone ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-amber-500/10 border-amber-500/30'}`}>
+                                                                <div className="flex items-center justify-between gap-2">
+                                                                    <div className={`text-sm font-black flex items-center gap-2 ${allDone ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                                                        {stopped
+                                                                            ? '⏹ Process stopped — partial results'
+                                                                            : allDone
+                                                                                ? '✓ Process finished — every domain verified'
+                                                                                : '⚠ Process finished — some domains still not verified'}
+                                                                    </div>
+                                                                    {domainVerifyState.doneAt && (
+                                                                        <span className="text-[10px] text-[var(--text-muted)] shrink-0">Finished {new Date(domainVerifyState.doneAt).toLocaleTimeString()}</span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 text-center">
+                                                                    <div className="bg-black/30 rounded-lg px-2 py-1.5">
+                                                                        <div className="text-lg font-black text-[var(--text-main)]">{accountsProcessed}</div>
+                                                                        <div className="text-[9px] uppercase tracking-wider text-[var(--text-muted)] font-bold">Accounts processed</div>
+                                                                    </div>
+                                                                    <div className="bg-black/30 rounded-lg px-2 py-1.5">
+                                                                        <div className="text-lg font-black text-emerald-400">{accountsFullyVerified.length}</div>
+                                                                        <div className="text-[9px] uppercase tracking-wider text-[var(--text-muted)] font-bold">100% handled</div>
+                                                                    </div>
+                                                                    <div className="bg-black/30 rounded-lg px-2 py-1.5">
+                                                                        <div className="text-lg font-black text-emerald-400">{verifiedDomains.length}</div>
+                                                                        <div className="text-[9px] uppercase tracking-wider text-[var(--text-muted)] font-bold">Domains verified</div>
+                                                                    </div>
+                                                                    <div className="bg-black/30 rounded-lg px-2 py-1.5">
+                                                                        <div className="text-lg font-black text-amber-400">{notVerifiedDomains.length}</div>
+                                                                        <div className="text-[9px] uppercase tracking-wider text-[var(--text-muted)] font-bold">Not verified</div>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            {notVerifiedDomains.length > 0 && (
+                                                                <div className="bg-black/30 border border-white/10 rounded-xl p-3">
+                                                                    <div className="text-xs font-black text-amber-400 uppercase tracking-widest mb-2">❌ Domains not verified ({notVerifiedDomains.length}) — not handled 100%</div>
+                                                                    <div className="space-y-0 max-h-48 overflow-y-auto">
+                                                                        {results.map((r: any) =>
+                                                                            (r.domains || [])
+                                                                                .filter((d: any) => d.status !== 'verified')
+                                                                                .map((d: any) => (
+                                                                                    <div key={r.adminEmail + d.domain} className="flex items-center justify-between gap-2 text-xs py-1.5 border-b border-white/5 last:border-0">
+                                                                                        <span className="flex items-center gap-2 min-w-0">
+                                                                                            <span className="text-red-400 shrink-0">✕</span>
+                                                                                            <span className="font-mono truncate">{d.domain}</span>
+                                                                                            <span className="text-[10px] text-[var(--text-muted)] shrink-0">({r.adminEmail})</span>
+                                                                                        </span>
+                                                                                        <span className="text-red-400/80 truncate max-w-[260px] shrink-0">{d.error || d.status}</span>
+                                                                                    </div>
+                                                                                ))
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    );
+                                                })()}
+
+                                                {(domainVerifyState.results || []).length === 0 && domainVerifyState.status === 'running' && (
+                                                    <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                                                        <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                                                        Logging in and fetching unverified domains…
+                                                    </div>
+                                                )}
+
+                                                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                                                    {(domainVerifyState.results || []).map((acc: any) => (
+                                                        <div key={acc.adminEmail} className="bg-white/5 rounded-xl p-3 border border-white/10">
+                                                            <div className="font-bold text-sm flex items-center justify-between gap-2 mb-1">
+                                                                <span className="truncate">{acc.adminEmail}</span>
+                                                                {acc.error ? (
+                                                                    <span className="text-xs text-red-400 shrink-0">❌ {acc.error}</span>
+                                                                ) : (acc.domains || []).length > 0 && (acc.domains || []).every((d: any) => d.status === 'verified') ? (
+                                                                    <span className="text-xs text-emerald-400 font-black shrink-0">✓ 100% handled</span>
+                                                                ) : (
+                                                                    <span className="text-xs text-[var(--text-muted)] shrink-0">
+                                                                        {acc.note || `${(acc.domains || []).filter((d: any) => d.status === 'verified').length}/${(acc.domains || []).length} verified`}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {(acc.domains || []).map((d: any) => (
+                                                                <div key={d.domain} className="flex items-center justify-between gap-2 text-xs py-1.5 border-t border-white/5">
+                                                                    <span className="font-mono truncate">{d.domain}</span>
+                                                                    {d.status === 'verified' ? (
+                                                                        <span className="text-emerald-400 font-bold shrink-0">✓ Verified</span>
+                                                                    ) : d.status === 'skipped' ? (
+                                                                        <span className="text-[var(--text-muted)] font-bold shrink-0">⊘ {d.error || 'Skipped'}</span>
+                                                                    ) : (
+                                                                        <span className="text-red-400 font-bold shrink-0">✕ {d.error || d.status}</span>
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                            {domainVerifyState.status !== 'running' && (acc.error || (acc.domains || []).some((d: any) => d.status === 'error')) && (
+                                                                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/5">
+                                                                    <button
+                                                                        onClick={() => handleRetryDomainVerify(acc.adminEmail)}
+                                                                        disabled={domainVerifyRetrying === acc.adminEmail}
+                                                                        className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-white text-xs font-black transition-all shrink-0 disabled:opacity-50"
+                                                                    >
+                                                                        {domainVerifyRetrying === acc.adminEmail ? '⏳ Retrying…' : '↻ Retry'}
+                                                                    </button>
+                                                                    <span className="text-[10px] text-[var(--text-muted)]">…or verify this account manually in the Admin Console → Domains</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                {domainVerifyState.status !== 'running' && (domainVerifyState.results || []).some((a: any) => a.error || (a.domains || []).some((d: any) => d.status === 'error')) && (
+                                                    <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                                                        <div className="text-xs font-black text-red-400 uppercase tracking-widest mb-2">⚠ Failed accounts — verify manually or retry</div>
+                                                        <div className="space-y-1.5">
+                                                            {(domainVerifyState.results || [])
+                                                                .filter((a: any) => a.error || (a.domains || []).some((d: any) => d.status === 'error'))
+                                                                .map((a: any) => (
+                                                                    <div key={a.adminEmail} className="flex items-center justify-between gap-2 text-xs">
+                                                                        <span className="font-mono truncate">{a.adminEmail}</span>
+                                                                        <div className="flex items-center gap-2 shrink-0">
+                                                                            <span className="text-red-400 truncate max-w-[220px]">{a.error || 'Some domains failed'}</span>
+                                                                            <button
+                                                                                onClick={() => handleRetryDomainVerify(a.adminEmail)}
+                                                                                disabled={domainVerifyRetrying === a.adminEmail}
+                                                                                className="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-white font-black transition-all disabled:opacity-50"
+                                                                            >
+                                                                                {domainVerifyRetrying === a.adminEmail ? '⏳' : '↻ Retry'}
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                        </div>
+                                                        <div className="text-[10px] text-[var(--text-muted)] mt-2">Manual: open admin.google.com → Domains → click “Verify” next to each unverified domain and follow the on-screen steps.</div>
+                                                    </div>
+                                                )}
+
+                                                {domainVerifyState.logs && domainVerifyState.logs.length > 0 && (
+                                                    <div className="bg-black/40 rounded-xl p-3 max-h-40 overflow-y-auto text-[11px] font-mono text-[var(--text-muted)] space-y-0.5">
+                                                        {domainVerifyState.logs.slice(-40).map((l: string, i: number) => (
+                                                            <div key={i} className="truncate">{l}</div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         {/* Section: Change Specific Users Domain */}
                                         <div className="space-y-4 border-t border-white/10 pt-6">
                                             <div>

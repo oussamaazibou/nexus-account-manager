@@ -7,10 +7,11 @@ function getCaptchaKey() {
         const configPath = path.join(__dirname, 'config.json');
         if (fs.existsSync(configPath)) {
             const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            return config.captchaKey || null;
+            if (config.captchaKey) return config.captchaKey;
         }
     } catch (e) { /* ignore */ }
-    return null;
+    // Fall back to the 2Captcha key already used by AccountVerifier.ts
+    return '4a8189e5ca7d59ebcd481b14387f58e4';
 }
 
 /**
@@ -111,8 +112,9 @@ async function solveGoogleLoginCaptchaIfPresent(page, password) {
         return true;
 
     } catch (err) {
-        if (!err.message.includes('Execution context was destroyed') && !err.message.includes('navigat')) {
-            console.log(`[CAPTCHA] Error solving captcha: ${err.message}`);
+        const msg = (err && err.message) ? err.message : String(err || 'Unknown captcha error');
+        if (!msg.includes('Execution context was destroyed') && !msg.includes('navigat')) {
+            console.log(`[CAPTCHA] Error solving captcha: ${msg}`);
         }
         // Return false to let the workflow continue (maybe it wasn't a strict blocker or will fail naturally)
         return false;

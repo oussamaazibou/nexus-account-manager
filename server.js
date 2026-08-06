@@ -16,6 +16,7 @@ import { checkStatus } from './checkStatusBot.js';
 import { SSHUploader } from './dist/services/ssh/SSHUploader.js';
 import * as AVModule from './dist/services/verification/AccountVerifier.js';
 const { AccountVerifier } = AVModule;
+import { verifyUnverifiedDomains as runDomainVerifyBot } from './domainVerifyBot.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -881,16 +882,7 @@ app.post('/api/accounts/archive', (req, res) => {
         // Add to archive
         const archive = getArchive();
         const existing = archive.findIndex(a => a.email === email);
-        const entry = {
-            id: `arc-${Date.now()}-${email}`,
-            email,
-            password: password || '',
-            collection: collection || null,
-            createdAt: createdAt || null,
-            verifiedBy: verifiedBy || null,
-            archivedAt: new Date().toISOString(),
-            archivedBy: archivedBy || 'unknown'
-        };
+        const entry = { id: `arc-${Date.now()}-${email}`, email, password: password || '', collection: collection || null, createdAt: createdAt || null, verifiedBy: verifiedBy || null, archivedAt: new Date().toISOString(), archivedBy: archivedBy || 'unknown' };
         if (existing >= 0) archive[existing] = entry;
         else archive.push(entry);
         saveArchive(archive);
@@ -2830,6 +2822,218 @@ app.post('/api/manage/verify-domain', async (req, res) => {
         const errMsg = e.response?.data?.error?.message || e.response?.data?.error || e.errors?.[0]?.message || e.message;
         console.error(`[Verify] ❌ ${errMsg}`);
         res.status(500).json({ error: errMsg });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// ── VERIFY UNVERIFIED DOMAINS (browser automation via Workspace UI) ─────
+// Logs into each admin account (one session per account), retrieves the
+// unverified domains through the Directory API, then uses the Workspace
+// getsetup codes link for every unverified domain in the SAME session,
+// ticking the "Come back here and confirm…" checkbox and pressing Confirm.
+// ═══════════════════════════════════════════════════════════════════════
+const domainVerifyJobs = new Map(); // jobId -> { job state }
+let domainVerifyCounter = 0;
+
+// Look up the password for an admin email from the known account files
+function lookupAccountPassword(adminEmail) {
+    const files = ['result_accounts.txt', 'accounts.txt'];
+    for (const file of files) {
+        const filePath = path.join(__dirname, file);
+        if (!fs.existsSync(filePath)) continue;
+        const lines = fs.readFileSync(filePath, 'utf8').split('\n').map(l => l.trim()).filter(Boolean);
+        for (const line of lines) {
+            const parts = line.split(':');
+            if (parts[0]?.trim().toLowerCase() === adminEmail.toLowerCase() && parts[1]) {
+                return parts.slice(1).join(':').trim();
+            }
+        }
+    }
+    return null;
+}
+
+// Fetch all unverified domain names for an admin account via Directory API
+async function getUnverifiedDomains(adminEmail, keyData, log = () => {}) {
+    const { google } = await import('googleapis');
+    const auth = new google.auth.JWT({
+        email: keyData.client_email,
+        key: keyData.private_key,
+        scopes: ['https://www.googleapis.com/auth/admin.directory.domain'],
+        subject: adminEmail
+    });
+    const admin = google.admin({ version: 'directory_v1', auth });
+    const res = await admin.domains.list({ customer: 'my_customer' });
+    const domains = (res.data.domains || []).map(d => ({
+        domainName: d.domainName,
+        verified: d.verified,
+        isPrimary: d.isPrimary
+    }));
+    const unverified = domains.filter(d => !d.verified).map(d => d.domainName);
+    log(`[Job] ${adminEmail}: ${domains.length} domain(s), ${unverified.length} unverified`);
+    return unverified;
+}
+
+async function runDomainVerifyJob(job) {
+    const pushLog = (m) => {
+        job.logs.push(m);
+        console.log(`[DomainVerify] ${m}`);
+    };
+    const concurrency = Math.max(1, Math.min(parseInt(job.concurrency) || 1, 10));
+    pushLog(`Job starting — ${job.entries.length} account(s), concurrency ${concurrency}`);
+
+    job.doneCount = 0;
+
+    const processEntry = async (entry) => {
+        if (job.stopRequested) return;
+        const accResult = { adminEmail: entry.adminEmail, domains: [], error: null };
+
+        try {
+            pushLog(`[${entry.adminEmail}] Starting…`);
+            const keyData = await getKeyData(entry.adminEmail);
+            const unverified = await getUnverifiedDomains(entry.adminEmail, keyData, pushLog);
+
+            if (unverified.length === 0) {
+                accResult.note = 'No unverified domains found';
+                pushLog(`[${entry.adminEmail}] No unverified domains`);
+            } else {
+                const password = entry.password || lookupAccountPassword(entry.adminEmail);
+                const botRes = await runDomainVerifyBot(
+                    { email: entry.adminEmail, password },
+                    {
+                        adminEmail: entry.adminEmail,
+                        unverifiedDomains: unverified,
+                        keyData,
+                        log: pushLog,
+                        shouldStop: () => job.stopRequested
+                    }
+                );
+                accResult.domains = botRes.results || [];
+                if (botRes.error) accResult.error = botRes.error;
+                pushLog(`[${entry.adminEmail}] Done — ${accResult.domains.filter(d => d.status === 'verified').length}/${accResult.domains.length} verified`);
+            }
+        } catch (e) {
+            accResult.error = e.message;
+            pushLog(`[${entry.adminEmail}] Error: ${e.message}`);
+        }
+        job.results.push(accResult);
+        job.doneCount++;
+    };
+
+    // Worker pool: up to `concurrency` accounts processed at the same time
+    let nextIndex = 0;
+    const runners = [];
+    for (let i = 0; i < concurrency; i++) {
+        runners.push((async () => {
+            while (!job.stopRequested) {
+                const idx = nextIndex++;
+                if (idx >= job.entries.length) break;
+                const entry = job.entries[idx];
+                job.current = { index: idx + 1, total: job.entries.length, adminEmail: entry.adminEmail };
+                await processEntry(entry);
+            }
+        })());
+    }
+    await Promise.all(runners);
+
+    if (job.status !== 'stopped') job.status = 'completed';
+    job.doneAt = Date.now();
+    console.log(`[DomainVerify] Job ${job.jobId} ${job.status}`);
+}
+
+// Start a domain-verification job
+app.post('/api/manage/domain-verify/start', async (req, res) => {
+    try {
+        const { entries, concurrency } = req.body;
+        if (!entries || !Array.isArray(entries) || entries.length === 0) {
+            return res.status(400).json({ error: 'entries[] required (adminEmail + optional password)' });
+        }
+
+        // Resolve concurrency: explicit → config.json → default 1
+        let resolvedConcurrency = concurrency;
+        if (!resolvedConcurrency) {
+            try {
+                const configPath = path.join(__dirname, 'config.json');
+                if (fs.existsSync(configPath)) {
+                    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+                    if (cfg.concurrency) resolvedConcurrency = parseInt(cfg.concurrency);
+                }
+            } catch (e) { /* ignore */ }
+        }
+        resolvedConcurrency = Math.max(1, Math.min(parseInt(resolvedConcurrency) || 1, 10));
+
+        domainVerifyCounter++;
+        const jobId = `dv_${Date.now().toString(36)}_${domainVerifyCounter}`;
+        const job = {
+            jobId,
+            status: 'running',
+            concurrency: resolvedConcurrency,
+            startedAt: Date.now(),
+            entries: entries.map(e => ({ adminEmail: e.adminEmail, password: e.password || null })),
+            results: [],
+            logs: [],
+            current: null,
+            doneCount: 0,
+            stopRequested: false
+        };
+        domainVerifyJobs.set(jobId, job);
+
+        runDomainVerifyJob(job); // fire-and-forget; progress read via /status
+
+        res.json({ success: true, jobId, concurrency: resolvedConcurrency });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Poll job status
+app.get('/api/manage/domain-verify/status', (req, res) => {
+    const job = domainVerifyJobs.get(req.query.jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    res.json({
+        jobId: job.jobId,
+        status: job.status,
+        concurrency: job.concurrency,
+        startedAt: job.startedAt,
+        doneAt: job.doneAt,
+        current: job.current,
+        results: job.results,
+        logs: job.logs.slice(-300)
+    });
+});
+
+// Request a graceful stop
+app.post('/api/manage/domain-verify/stop', (req, res) => {
+    const job = domainVerifyJobs.get(req.body.jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    job.stopRequested = true;
+    res.json({ success: true });
+});
+
+// Retry a single failed account (e.g. LOGIN_FAILED) synchronously — returns the
+// result so the UI can render it immediately without starting a new bulk job.
+app.post('/api/manage/domain-verify/retry-one', async (req, res) => {
+    try {
+        const { adminEmail, password } = req.body;
+        if (!adminEmail) return res.status(400).json({ error: 'adminEmail required' });
+        const pushLog = (m) => console.log(`[DomainVerify:retry] ${m}`);
+        const keyData = await getKeyData(adminEmail);
+        const unverified = await getUnverifiedDomains(adminEmail, keyData, pushLog);
+        const accResult = { adminEmail, domains: [], error: null };
+
+        if (unverified.length === 0) {
+            accResult.note = 'No unverified domains found';
+        } else {
+            const pwd = password || lookupAccountPassword(adminEmail);
+            const botRes = await runDomainVerifyBot(
+                { email: adminEmail, password: pwd },
+                { adminEmail, unverifiedDomains: unverified, keyData, log: pushLog }
+            );
+            accResult.domains = botRes.results || [];
+            if (botRes.error) accResult.error = botRes.error;
+        }
+        res.json({ success: true, result: accResult });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 
