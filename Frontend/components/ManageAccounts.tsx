@@ -81,6 +81,7 @@ const ManageAccounts: React.FC = () => {
     // Domain Verification (bulk, via Workspace UI session) state
     const [domainVerifyJobId, setDomainVerifyJobId] = useState<string | null>(null);
     const [domainVerifyState, setDomainVerifyState] = useState<any>(null);
+    const [domainVerifyConcurrency, setDomainVerifyConcurrency] = useState<number>(2);
     const [domainVerifyLoading, setDomainVerifyLoading] = useState(false);
     const [domainVerifyEmails, setDomainVerifyEmails] = useState<string[]>([]);
 
@@ -438,7 +439,7 @@ const ManageAccounts: React.FC = () => {
             const res = await fetch(`${API_URL}/manage/domain-verify/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entries })
+                body: JSON.stringify({ entries, concurrency: domainVerifyConcurrency })
             });
             const data = await res.json();
             if (data.success) {
@@ -1172,6 +1173,22 @@ const ManageAccounts: React.FC = () => {
                                                 <button onClick={handleDownloadBulkUsers} disabled={!bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500 hover:text-white text-sm font-bold transition-all shrink-0">
                                                     💾 Download Users
                                                 </button>
+                                                <div className="flex items-center gap-1.5 bg-black/30 border border-white/10 rounded-xl px-2 py-1.5 shrink-0">
+                                                    <span className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-wider leading-none">Accounts<br/>at once</span>
+                                                    <div className="flex items-center gap-1">
+                                                        <button onClick={() => setDomainVerifyConcurrency(c => Math.max(1, c - 1))} disabled={domainVerifyLoading} className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-black leading-none disabled:opacity-40">−</button>
+                                                        <input
+                                                            type="number"
+                                                            min={1}
+                                                            max={10}
+                                                            value={domainVerifyConcurrency}
+                                                            disabled={domainVerifyLoading}
+                                                            onChange={e => setDomainVerifyConcurrency(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                                                            className="w-10 bg-black/40 border border-white/10 rounded-lg text-center text-sm font-black text-emerald-400 focus:outline-none focus:border-emerald-500"
+                                                        />
+                                                        <button onClick={() => setDomainVerifyConcurrency(c => Math.min(10, c + 1))} disabled={domainVerifyLoading} className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-black leading-none disabled:opacity-40">+</button>
+                                                    </div>
+                                                </div>
                                                 <button onClick={handleStartDomainVerify} disabled={domainVerifyLoading || !bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white text-sm font-bold transition-all shrink-0">
                                                     {domainVerifyLoading ? '⏳ Verifying...' : '✅ Verify Unverified Domains'}
                                                 </button>
@@ -1277,6 +1294,7 @@ const ManageAccounts: React.FC = () => {
                                                         {domainVerifyState.current && domainVerifyState.status === 'running' && (
                                                             <p className="text-xs text-[var(--text-muted)] mt-1">
                                                                 Account {domainVerifyState.current.index}/{domainVerifyState.current.total} · <span className="font-mono">{domainVerifyState.current.adminEmail}</span>
+                                                                {domainVerifyState.concurrency && <span className="ml-2 text-emerald-400">⚡ {domainVerifyState.concurrency} concurrent</span>}
                                                             </p>
                                                         )}
                                                     </div>

@@ -2878,11 +2878,13 @@ async function runDomainVerifyJob(job) {
         job.logs.push(m);
         console.log(`[DomainVerify] ${m}`);
     };
-    for (let i = 0; i < job.entries.length; i++) {
-        if (job.stopRequested) { job.status = 'stopped'; break; }
+    const concurrency = Math.max(1, Math.min(parseInt(job.concurrency) || 1, 10));
+    pushLog(`Job starting — ${job.entries.length} account(s), concurrency ${concurrency}`);
 
-        const entry = job.entries[i];
-        job.current = { index: i + 1, total: job.entries.length, adminEmail: entry.adminEmail };
+    job.doneCount = 0;
+
+    const processEntry = async (entry) => {
+        if (job.stopRequested) return;
         const accResult = { adminEmail: entry.adminEmail, domains: [], error: null };
 
         try {
@@ -2914,7 +2916,25 @@ async function runDomainVerifyJob(job) {
             pushLog(`[${entry.adminEmail}] Error: ${e.message}`);
         }
         job.results.push(accResult);
+        job.doneCount++;
+    };
+
+    // Worker pool: up to `concurrency` accounts processed at the same time
+    let nextIndex = 0;
+    const runners = [];
+    for (let i = 0; i < concurrency; i++) {
+        runners.push((async () => {
+            while (!job.stopRequested) {
+                const idx = nextIndex++;
+                if (idx >= job.entries.length) break;
+                const entry = job.entries[idx];
+                job.current = { index: idx + 1, total: job.entries.length, adminEmail: entry.adminEmail };
+                await processEntry(entry);
+            }
+        })());
     }
+    await Promise.all(runners);
+
     if (job.status !== 'stopped') job.status = 'completed';
     job.doneAt = Date.now();
     console.log(`[DomainVerify] Job ${job.jobId} ${job.status}`);
@@ -2923,28 +2943,43 @@ async function runDomainVerifyJob(job) {
 // Start a domain-verification job
 app.post('/api/manage/domain-verify/start', async (req, res) => {
     try {
-        const { entries } = req.body;
+        const { entries, concurrency } = req.body;
         if (!entries || !Array.isArray(entries) || entries.length === 0) {
             return res.status(400).json({ error: 'entries[] required (adminEmail + optional password)' });
         }
+
+        // Resolve concurrency: explicit → config.json → default 1
+        let resolvedConcurrency = concurrency;
+        if (!resolvedConcurrency) {
+            try {
+                const configPath = path.join(__dirname, 'config.json');
+                if (fs.existsSync(configPath)) {
+                    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+                    if (cfg.concurrency) resolvedConcurrency = parseInt(cfg.concurrency);
+                }
+            } catch (e) { /* ignore */ }
+        }
+        resolvedConcurrency = Math.max(1, Math.min(parseInt(resolvedConcurrency) || 1, 10));
 
         domainVerifyCounter++;
         const jobId = `dv_${Date.now().toString(36)}_${domainVerifyCounter}`;
         const job = {
             jobId,
             status: 'running',
+            concurrency: resolvedConcurrency,
             startedAt: Date.now(),
             entries: entries.map(e => ({ adminEmail: e.adminEmail, password: e.password || null })),
             results: [],
             logs: [],
             current: null,
+            doneCount: 0,
             stopRequested: false
         };
         domainVerifyJobs.set(jobId, job);
 
         runDomainVerifyJob(job); // fire-and-forget; progress read via /status
 
-        res.json({ success: true, jobId });
+        res.json({ success: true, jobId, concurrency: resolvedConcurrency });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -2957,6 +2992,7 @@ app.get('/api/manage/domain-verify/status', (req, res) => {
     res.json({
         jobId: job.jobId,
         status: job.status,
+        concurrency: job.concurrency,
         startedAt: job.startedAt,
         doneAt: job.doneAt,
         current: job.current,
