@@ -475,7 +475,7 @@ const App: React.FC = () => {
           {activeView==='DASHBOARD'       && hasPermission('DASHBOARD')       && <Dashboard onAdd={addAccountsFromDomains} onStop={handleStopCreation} settings={settings} setSettings={updateSettings as any} stats={dashboardStats} username={currentUser?.username} />}
           {activeView==='QUEUE'           && hasPermission('QUEUE')           && <AccountQueue accounts={accounts} onVerify={handleVerify} onCheckLogin={handleCheckLogin} onBulkVerify={handleBulkVerify} onPhoneVerify={handlePhoneVerify} onRemove={removeAccount} settings={settings} setSettings={setSettings} />}
           {activeView==='OPERATIONS'      && hasPermission('OPERATIONS')      && <LiveOperations accounts={accounts} onVerify={handleVerify} />}
-          {activeView==='VALID_ACCOUNTS'  && hasPermission('VALID_ACCOUNTS')  && <ValidAccounts accounts={accounts} onRemove={removeAccount} onBatchRemove={handleBatchRemove} onUpdateCollection={updateAccountCollection} onEditAccount={editAccount} onMoveToQueue={handleMoveToQueue} onNavigate={navigate} />}
+          {activeView==='VALID_ACCOUNTS'  && hasPermission('VALID_ACCOUNTS')  && <ValidAccounts accounts={accounts} onRemove={removeAccount} onBatchRemove={handleBatchRemove} onUpdateCollection={updateAccountCollection} onEditAccount={editAccount} onMoveToQueue={handleMoveToQueue} onNavigate={navigate} currentUser={currentUser} />}
           {activeView==='PHONE_VERIFY'    && hasPermission('PHONE_VERIFY')    && <PhoneVerifyAccounts />}
           {activeView==='MANAGE_ACCOUNTS' && hasPermission('MANAGE_ACCOUNTS') && <ManageAccounts />}
           {activeView==='APP_PASSWORDS'   && hasPermission('APP_PASSWORDS')   && <AppPasswords />}

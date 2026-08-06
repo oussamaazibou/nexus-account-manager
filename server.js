@@ -867,7 +867,7 @@ const saveArchive = (data) => {
 // POST /api/accounts/archive — move one account from result_accounts.txt to archive
 app.post('/api/accounts/archive', (req, res) => {
     try {
-        const { email, password, collection, createdAt, verifiedBy } = req.body;
+        const { email, password, collection, createdAt, verifiedBy, archivedBy } = req.body;
         if (!email) return res.status(400).json({ error: 'email required' });
 
         // Remove from result_accounts.txt
@@ -881,12 +881,21 @@ app.post('/api/accounts/archive', (req, res) => {
         // Add to archive
         const archive = getArchive();
         const existing = archive.findIndex(a => a.email === email);
-        const entry = { id: `arc-${Date.now()}-${email}`, email, password: password || '', collection: collection || null, createdAt: createdAt || null, verifiedBy: verifiedBy || null, archivedAt: new Date().toISOString() };
+        const entry = {
+            id: `arc-${Date.now()}-${email}`,
+            email,
+            password: password || '',
+            collection: collection || null,
+            createdAt: createdAt || null,
+            verifiedBy: verifiedBy || null,
+            archivedAt: new Date().toISOString(),
+            archivedBy: archivedBy || 'unknown'
+        };
         if (existing >= 0) archive[existing] = entry;
         else archive.push(entry);
         saveArchive(archive);
 
-        console.log(`[Archive] Archived ${email}`);
+        console.log(`[Archive] Archived ${email} by ${archivedBy || 'unknown'}`);
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: e.message });

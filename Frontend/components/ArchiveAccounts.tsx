@@ -10,6 +10,7 @@ interface ArchivedAccount {
   createdAt?: string;
   verifiedBy?: string;
   archivedAt: string;
+  archivedBy?: string;
 }
 
 const toast = (msg: string, type: 'ok' | 'err' | 'info' = 'info') => {
@@ -267,13 +268,14 @@ const ArchiveAccounts: React.FC = () => {
                   <th className="px-4 py-5 text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest">Collection</th>
                   <th className="px-4 py-5 text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest">Created</th>
                   <th className="px-4 py-5 text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest">Archived</th>
+                  <th className="px-4 py-5 text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest">Archived By</th>
                   <th className="px-4 py-5 text-[10px] font-black text-[var(--text-muted)] uppercase tracking-widest text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-theme-glass">
                 {paginated.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-24 text-center text-[var(--text-muted)] italic font-medium opacity-50">
+                    <td colSpan={8} className="px-6 py-24 text-center text-[var(--text-muted)] italic font-medium opacity-50">
                       <div className="flex flex-col items-center gap-3">
                         <span className="text-4xl">📦</span>
                         <span>No archived accounts found.</span>
@@ -331,6 +333,16 @@ const ArchiveAccounts: React.FC = () => {
                         <span className="text-sm text-slate-500 font-medium">
                           {new Date(acc.archivedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                         </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        {acc.archivedBy && acc.archivedBy !== 'unknown' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 text-xs font-bold">
+                            <span>👤</span>
+                            {acc.archivedBy}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-[var(--text-muted)] italic opacity-40">—</span>
+                        )}
                       </td>
                       <td className="px-5 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 md:opacity-50 group-hover:opacity-100 transition-opacity">

@@ -13,6 +13,7 @@ interface ValidAccountsProps {
   onEditAccount: (id: string, email: string, pass: string) => void;
   onMoveToQueue: (ids: string[]) => void;
   onNavigate?: (view: string) => void;
+  currentUser?: { username: string; role: string } | null;
 }
 
 const ValidAccounts: React.FC<ValidAccountsProps> = ({
@@ -22,7 +23,8 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
   onUpdateCollection,
   onEditAccount,
   onMoveToQueue,
-  onNavigate
+  onNavigate,
+  currentUser
 }) => {
   /* Self-fetched data from result_accounts.txt ONLY */
   const [resultAccounts, setResultAccounts] = useState<Account[]>([]);
@@ -368,7 +370,7 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
       const res = await fetch(`${API_URL}/accounts/archive`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: acc.email, password: acc.password, collection: acc.collection, createdAt: acc.createdAt, verifiedBy: acc.verifiedBy })
+        body: JSON.stringify({ email: acc.email, password: acc.password, collection: acc.collection, createdAt: acc.createdAt, verifiedBy: acc.verifiedBy, archivedBy: currentUser?.username || 'unknown' })
       });
       const data = await res.json();
       if (data.success) {
@@ -398,7 +400,7 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
         fetch(`${API_URL}/accounts/archive`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: acc.email, password: acc.password, collection: acc.collection, createdAt: acc.createdAt, verifiedBy: acc.verifiedBy })
+          body: JSON.stringify({ email: acc.email, password: acc.password, collection: acc.collection, createdAt: acc.createdAt, verifiedBy: acc.verifiedBy, archivedBy: currentUser?.username || 'unknown' })
         }).then(r => r.json()).catch(() => ({ success: false }))
       ));
       const succeeded = results.filter(r => r.success);
