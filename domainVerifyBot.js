@@ -22,8 +22,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const CODES_URL = (domain) =>
-    `https://workspace.google.com/u/0/getsetup/domain/verification/codes?cid=00tkujf8&domain=${encodeURIComponent(domain)}&continue_url=https%3A%2F%2Fadmin.google.com%2Fac%2Fdomains%2Fmanage%3Futm_source%3Dog_am&origin=ac_manage_domains`;
+const CODES_URL = (domain, cid = '00tkujf8') =>
+    `https://workspace.google.com/u/0/getsetup/domain/verification/codes?cid=${cid}&domain=${encodeURIComponent(domain)}&continue_url=https%3A%2F%2Fadmin.google.com%2Fac%2Fdomains%2Fmanage%3Futm_source%3Dog_am&origin=ac_manage_domains`;
 
 const CHECKBOX_PHRASE = 'come back here and confirm';
 
@@ -383,11 +383,67 @@ async function waitForDomainVerified(keyData, adminEmail, domain, timeoutMs, log
     return false;
 }
 
+// ── Get the per-account cid from the Admin Console domains page ───────────────
+// Opens https://admin.google.com/u/0/ac/domains/manage, presses the "Verify"
+// action for the domain, and reads the `cid` from the resulting getsetup URL.
+// The cid always looks like `cid=01n26agf` (starts with cid=, ends with &).
+async function getCidForDomain(page, domain, log = () => {}) {
+    const MANAGE_URL = 'https://admin.google.com/u/0/ac/domains/manage';
+    log(`[Verify] Opening Admin Console domains page for ${domain}…`);
+    await page.goto(MANAGE_URL, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+    await sleep(6000);
+
+    if (page.url().includes('accounts.google.com')) {
+        log(`[Verify] Admin Console bounced to login — session lost (${page.url()})`);
+        return null;
+    }
+
+    const clicked = await page.evaluate((domain) => {
+        const text = (el) => (el.textContent || '').trim().toLowerCase();
+        const rows = Array.from(document.querySelectorAll('tr, div[role="row"], li, div.row, md-list-item, material-list-item, div[role="listitem"]'));
+        const row = rows.find(r => {
+            const t = text(r);
+            return t.includes(domain.toLowerCase()) && (t.includes('verify') || t.includes('vérifier'));
+        });
+        const scope = row || document;
+        const btns = Array.from(scope.querySelectorAll('button, a, [role="button"], [role="link"], paper-button, mat-button, [data-tooltip]'));
+        const visible = btns.filter(b => {
+            try { return b.offsetParent !== null && b.getBoundingClientRect().width > 0; } catch (e) { return false; }
+        });
+        const pick = visible.find(b => {
+            const t = text(b);
+            const tip = (b.getAttribute && b.getAttribute('data-tooltip')) || '';
+            return t && t.length < 60 && (t.includes('verify') || t.includes('vérifier') || tip.toLowerCase().includes('verify'));
+        });
+        if (pick) { pick.click(); return { clicked: true, label: text(pick) }; }
+        return { clicked: false };
+    }, domain).catch(() => ({ clicked: false }));
+
+    if (!clicked.clicked) {
+        log(`[Verify] No "Verify" action found for ${domain}`);
+        return null;
+    }
+    log(`[Verify] Clicked "${clicked.label}" for ${domain}`);
+
+    // Wait for the getsetup URL and extract the cid
+    for (let i = 0; i < 12; i++) {
+        await sleep(1000);
+        const url = page.url();
+        const m = url.match(/[?&]cid=([A-Za-z0-9_-]+)/);
+        if (m) {
+            log(`[Verify] Extracted cid=${m[1]} (${url.substring(0, 110)}…)`);
+            return m[1];
+        }
+        if (i === 11) log(`[Verify] No cid found in URL: ${url.substring(0, 160)}`);
+    }
+    return null;
+}
+
 // ── Verify a single unverified domain on an authenticated page ────────────────
-async function verifyDomainOnPage(page, domain, keyData, adminEmail, log = () => {}, shouldStop = () => false) {
+async function verifyDomainOnPage(page, domain, keyData, adminEmail, log = () => {}, shouldStop = () => false, cid = '00tkujf8') {
     if (shouldStop()) return { domain, status: 'skipped', error: 'Stopped by user' };
 
-    const url = CODES_URL(domain);
+    const url = CODES_URL(domain, cid);
     log(`[Verify] Navigating to codes page for ${domain}`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
     await sleep(4500);
@@ -465,7 +521,13 @@ export async function verifyUnverifiedDomains(account, opts = {}) {
                 results.push({ domain, status: 'skipped', error: 'Stopped by user' });
                 break;
             }
-            const r = await verifyDomainOnPage(page, domain, keyData, adminEmail, log, shouldStop);
+            const cid = await getCidForDomain(page, domain, log);
+            if (!cid) {
+                log(`[Account] Could not obtain cid for ${domain}`);
+                results.push({ domain, status: 'error', error: 'Could not obtain cid from Admin Console (Verify action not found or no cid in URL)' });
+                continue;
+            }
+            const r = await verifyDomainOnPage(page, domain, keyData, adminEmail, log, shouldStop, cid);
             results.push(r);
         }
 
