@@ -112,8 +112,9 @@ async function solveGoogleLoginCaptchaIfPresent(page, password) {
         return true;
 
     } catch (err) {
-        if (!err.message.includes('Execution context was destroyed') && !err.message.includes('navigat')) {
-            console.log(`[CAPTCHA] Error solving captcha: ${err.message}`);
+        const msg = (err && err.message) ? err.message : String(err || 'Unknown captcha error');
+        if (!msg.includes('Execution context was destroyed') && !msg.includes('navigat')) {
+            console.log(`[CAPTCHA] Error solving captcha: ${msg}`);
         }
         // Return false to let the workflow continue (maybe it wasn't a strict blocker or will fail naturally)
         return false;
