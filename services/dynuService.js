@@ -76,6 +76,52 @@ export default class DynuService {
         return null;
     }
 
+    /**
+     * Create a Dynamic DNS host (managed domain) in Dynu for `hostname`.
+     * This is the API equivalent of "Add Dynamic DNS" in the Dynu dashboard.
+     * Returns { success, zoneId, hostname, already, error }.
+     */
+    async createHost(hostname) {
+        try {
+            const resp = await axios.post(`${this.baseUrl}/dns`, {
+                name: hostname,
+                group: '',
+                state: true,
+                ipv4Address: '',
+                ipv6Address: ''
+            }, { headers: this.headers(), timeout: 15000 });
+            const data = this.unwrap(resp);
+            return { success: true, zoneId: data.id, hostname: data.name, already: false, record: data };
+        } catch (e) {
+            const msg = String(e.message || '').toLowerCase();
+            if (msg.includes('exist') || msg.includes('conflict') || msg.includes('duplicate') || msg.includes('already')) {
+                return { success: true, already: true, error: e.message };
+            }
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
+     * Ensure the Dynamic DNS host exists for `hostname`.
+     * Checks the zone list for an exact-name match first (getroot resolves the
+     * parent zone, so it cannot tell whether the subdomain host itself exists),
+     * then creates it via POST /dns. Re-checks after a create failure in case
+     * of a race. Returns { success, zoneId, hostname, already, error }.
+     */
+    async ensureHost(hostname) {
+        const lower = String(hostname).toLowerCase();
+        const match = (zones) => zones.find(z => String(z.name).toLowerCase() === lower);
+        const existing = match(await this.listZones());
+        if (existing) return { success: true, already: true, zoneId: existing.id, hostname: existing.name };
+
+        const created = await this.createHost(lower);
+        if (created.success) return created;
+
+        const nowExisting = match(await this.listZones());
+        if (nowExisting) return { success: true, already: true, zoneId: nowExisting.id, hostname: nowExisting.name };
+        return created;
+    }
+
     async listRecords(zoneId, recordType) {
         try {
             const resp = await axios.get(`${this.baseUrl}/dns/${zoneId}/record`, {

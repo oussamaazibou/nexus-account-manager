@@ -14,6 +14,7 @@ interface DynuProvisioned {
     adminEmail: string;
     provider: string | null;
     verified: boolean;
+    dynuHost?: { created: boolean; already?: boolean; zoneId?: number | null } | null;
     createdAt: string;
 }
 
@@ -333,6 +334,11 @@ const DynuDomains: React.FC = () => {
                                         <span className={`text-[10px] px-2 py-1 rounded font-black uppercase ${rec.provider === 'cloudflare' ? 'bg-orange-500/15 text-orange-400' : rec.provider === 'dynu' ? 'bg-cyan-500/15 text-cyan-400' : 'bg-white/5 text-[var(--text-muted)]'}`}>
                                             {rec.provider || 'no provider'}
                                         </span>
+                                        {rec.provider === 'dynu' && (
+                                            <span title={rec.dynuHost ? `Dynu host ${rec.dynuHost.zoneId ? `#${rec.dynuHost.zoneId}${rec.dynuHost.already ? ' (pre-existing)' : ''}` : ''}` : 'Host was not auto-created in Dynu'} className={`text-[10px] px-2 py-1 rounded font-black uppercase ${rec.dynuHost?.created ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>
+                                                {rec.dynuHost?.created ? 'Host ✓' : 'Host ✕'}
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="flex items-center justify-between gap-3">
                                         <span className={`text-[11px] font-bold ${rec.verified ? 'text-emerald-400' : 'text-amber-400'}`}>

@@ -2925,6 +2925,20 @@ app.post('/api/dynu/provision', async (req, res) => {
         const det = await detectDnsProvider(subdomain, config);
         let provider = det.provider;
         let verified = false;
+        let dynuHost = null;
+
+        // 4a) For Dynu, create the Dynamic DNS host for the generated subdomain
+        //     (API equivalent of "Add Dynamic DNS" in the dashboard) so the
+        //     host exists before TXT/MX records are added.
+        if (det.provider === 'dynu' && det.dynu?.service) {
+            const hostRes = await det.dynu.service.ensureHost(subdomain);
+            if (hostRes.success) {
+                dynuHost = { created: true, already: !!hostRes.already, zoneId: hostRes.zoneId || null };
+                console.log(`[Dynu] ✅ Dynamic DNS host ready: ${subdomain}${hostRes.already ? ' (already existed)' : ''}`);
+            } else {
+                console.warn(`[Dynu] ⚠️ Could not create Dynamic DNS host for ${subdomain}: ${hostRes.error}`);
+            }
+        }
 
         if (det.provider) {
             const dnsRes = await upsertDnsTxt(subdomain, txtToken, config, (m) => console.log(`[Dynu] ${m}`));
@@ -2961,11 +2975,12 @@ app.post('/api/dynu/provision', async (req, res) => {
             adminEmail,
             provider,
             verified,
+            dynuHost,
             createdAt: new Date().toISOString()
         });
         writeDynuDomainsStore(store);
 
-        res.json({ success: true, subdomain, provider, verified });
+        res.json({ success: true, subdomain, provider, verified, dynuHost });
     } catch (e) {
         const errMsg = e.response?.data?.error?.message || e.response?.data?.error || e.message;
         console.error(`[Dynu] ❌ Provision error: ${errMsg}`);
