@@ -97,7 +97,9 @@ export default class DynuService {
             if (msg.includes('exist') || msg.includes('conflict') || msg.includes('duplicate') || msg.includes('already')) {
                 return { success: true, already: true, error: e.message };
             }
-            return { success: false, error: e.message };
+            const ex = e.dynu;
+            const detail = ex ? `[${ex.statusCode} ${ex.type}] ${ex.message}` : e.message;
+            return { success: false, error: detail };
         }
     }
 

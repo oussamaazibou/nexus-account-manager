@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 const API_URL = '/api';
 
@@ -6,6 +6,12 @@ interface JobAccount {
     email: string;
     collection?: string;
     status?: string;
+}
+
+interface DynuLog {
+    ts: string;
+    level: 'INFO' | 'WARN' | 'ERROR';
+    msg: string;
 }
 
 interface DynuProvisioned {
@@ -49,6 +55,27 @@ const DynuDomains: React.FC = () => {
     const [removingBase, setRemovingBase] = useState<string | null>(null);
     const [provisioning, setProvisioning] = useState<string | null>(null);
     const [verifying, setVerifying] = useState<string | null>(null);
+    const [logs, setLogs] = useState<DynuLog[]>([]);
+    const [logsOpen, setLogsOpen] = useState(true);
+    const logsEndRef = useRef<HTMLDivElement>(null);
+
+    const loadLogs = useCallback(async () => {
+        try {
+            const res = await fetch(`${API_URL}/dynu/logs`);
+            const data = await res.json();
+            if (Array.isArray(data)) setLogs(data);
+        } catch { /* silent */ }
+    }, []);
+
+    useEffect(() => {
+        loadLogs();
+        const iv = setInterval(loadLogs, 2000);
+        return () => clearInterval(iv);
+    }, [loadLogs]);
+
+    useEffect(() => {
+        logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [logs, logsOpen]);
 
     const loadStore = useCallback(async () => {
         try {
@@ -365,6 +392,53 @@ const DynuDomains: React.FC = () => {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            {/* ── Dynu activity log ── */}
+            <div className="glass-card p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                    <button className="flex items-center gap-2 text-left" onClick={() => setLogsOpen(o => !o)}>
+                        <svg className={`transition-transform ${logsOpen ? 'rotate-90' : ''}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6" /></svg>
+                        <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Dynu Activity Log</h3>
+                        {logs.some(l => l.level === 'ERROR') && (
+                            <span className="text-[10px] px-2 py-0.5 rounded font-black uppercase bg-rose-500/15 text-rose-400">
+                                {logs.filter(l => l.level === 'ERROR').length} error{logs.some(l => l.level === 'ERROR') && logs.filter(l => l.level === 'ERROR').length > 1 ? 's' : ''}
+                            </span>
+                        )}
+                        {logs.some(l => l.level === 'WARN') && !logs.some(l => l.level === 'ERROR') && (
+                            <span className="text-[10px] px-2 py-0.5 rounded font-black uppercase bg-amber-500/15 text-amber-400">
+                                {logs.filter(l => l.level === 'WARN').length} warn
+                            </span>
+                        )}
+                    </button>
+                    <button
+                        onClick={loadLogs}
+                        className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] font-black text-[10px] uppercase transition-all"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                {logsOpen && (
+                    <div className="h-56 overflow-y-auto rounded-xl bg-black/40 border border-white/5 p-3 font-mono text-[11px] leading-relaxed space-y-1">
+                        {logs.length === 0 && (
+                            <div className="text-center py-8 text-[var(--text-muted)] text-sm font-sans">
+                                No Dynu activity yet. Provision a subdomain to see the live process.
+                            </div>
+                        )}
+                        {logs.map((log, i) => {
+                            const color = log.level === 'ERROR' ? 'var(--red, #f87171)' : log.level === 'WARN' ? 'var(--amber, #fbbf24)' : 'var(--text-muted, #94a3b8)';
+                            const prefix = log.level === 'ERROR' ? '✕' : log.level === 'WARN' ? '⚠' : '›';
+                            return (
+                                <div key={i} className="flex gap-2" style={{ color }}>
+                                    <span className="shrink-0 text-white/30">{new Date(log.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                                    <span className="shrink-0">{prefix}</span>
+                                    <span className="break-words">{log.msg}</span>
+                                </div>
+                            );
+                        })}
+                        <div ref={logsEndRef} />
+                    </div>
+                )}
             </div>
         </div>
     );
