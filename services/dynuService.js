@@ -95,28 +95,77 @@ export default class DynuService {
     /**
      * Create a Dynamic DNS host (managed domain) in Dynu for `hostname`.
      * This is the API equivalent of "Add Dynamic DNS" in the Dynu dashboard.
-     * Returns { success, zoneId, hostname, already, error }.
+     * Dynu rejects partial payloads with HTTP 501 "Argument Exception" (their
+     * validation error), so several full-payload shapes are attempted and the
+     * exact response of each is surfaced for diagnosis.
+     * Returns { success, zoneId, hostname, already, method, error }.
      */
     async createHost(hostname) {
-        try {
-            const resp = await axios.post(`${this.baseUrl}/dns`, {
-                name: hostname,
-                group: '',
-                state: true,
-                ipv4Address: '',
-                ipv6Address: ''
-            }, { headers: this.headers(), timeout: 15000 });
-            const data = this.unwrap(resp);
-            return { success: true, zoneId: data.id, hostname: data.name, already: false, record: data };
-        } catch (e) {
-            const msg = String(e.message || '').toLowerCase();
-            if (msg.includes('exist') || msg.includes('conflict') || msg.includes('duplicate') || msg.includes('already')) {
-                return { success: true, already: true, error: e.message };
+        const attempts = [
+            {
+                label: 'full',
+                body: {
+                    name: hostname,
+                    group: '',
+                    ipv4Address: '0.0.0.0',
+                    ipv6Address: '',
+                    ttl: 300,
+                    ipv4: true,
+                    ipv6: false,
+                    ipv4WildcardAlias: false,
+                    ipv6WildcardAlias: false,
+                    allowZoneTransfer: false,
+                    dnssec: false
+                }
+            },
+            {
+                label: 'no-ip',
+                body: {
+                    name: hostname,
+                    group: '',
+                    ipv6Address: '',
+                    ttl: 300,
+                    ipv4: false,
+                    ipv6: false,
+                    ipv4WildcardAlias: false,
+                    ipv6WildcardAlias: false,
+                    allowZoneTransfer: false,
+                    dnssec: false
+                }
+            },
+            {
+                label: 'minimal',
+                body: {
+                    name: hostname,
+                    group: '',
+                    ttl: 300
+                }
             }
-            const ex = e.dynu;
-            const detail = ex ? `[${ex.statusCode} ${ex.type}] ${ex.message}` : e.message;
-            return { success: false, error: detail };
+        ];
+        let lastError = '';
+        for (const { label, body } of attempts) {
+            try {
+                const resp = await axios.post(`${this.baseUrl}/dns`, body, { headers: this.headers(), timeout: 15000 });
+                const data = this.unwrap(resp);
+                const id = data && (data.id ?? (data.domains?.[0]?.id ?? null));
+                if (id) {
+                    return { success: true, zoneId: id, hostname: data.name || hostname, already: false, method: `POST /dns (${label})`, record: data };
+                }
+                lastError += `${label} -> no id in response: ${JSON.stringify(data)}; `;
+            } catch (e) {
+                const ex = e.dynu || e.response?.data?.exception;
+                const bodyStr = e.response?.data ? JSON.stringify(e.response.data) : '';
+                const detail = ex
+                    ? `[${ex.statusCode} ${ex.type}] ${ex.message}`
+                    : `HTTP ${e.response?.status || '?'} ${bodyStr || e.message}`;
+                const low = (String(ex?.message || '') + ' ' + bodyStr + ' ' + String(e.message)).toLowerCase();
+                if (low.includes('exist') || low.includes('conflict') || low.includes('duplicate') || low.includes('already')) {
+                    return { success: true, already: true, method: `POST /dns (${label})`, error: detail };
+                }
+                lastError += `${label} -> ${detail}; `;
+            }
         }
+        return { success: false, error: lastError.trim() };
     }
 
     /**
