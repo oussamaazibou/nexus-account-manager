@@ -39,7 +39,7 @@ export default class DynuService {
 
     async listZones() {
         try {
-            const resp = await axios.get(`${this.baseUrl}/dns`, { headers: this.headers() });
+            const resp = await axios.get(`${this.baseUrl}/dns`, { headers: this.headers(), timeout: 15000 });
             return this.unwrap(resp).domains || [];
         } catch (e) {
             console.error('Dynu Service Error (listZones):', e.message);
@@ -54,7 +54,7 @@ export default class DynuService {
     async findZoneId(domain) {
         // 1) getroot resolves subdomains natively (covers unique subdomains).
         try {
-            const resp = await axios.get(`${this.baseUrl}/dns/getroot/${encodeURIComponent(domain)}`, { headers: this.headers() });
+            const resp = await axios.get(`${this.baseUrl}/dns/getroot/${encodeURIComponent(domain)}`, { headers: this.headers(), timeout: 15000 });
             const data = this.unwrap(resp);
             if (data && data.id) {
                 return { zoneId: data.id, zoneName: data.domainName, node: data.node || '' };
@@ -76,25 +76,12 @@ export default class DynuService {
         return null;
     }
 
-    async listTxtRecords(zoneId) {
-        try {
-            const resp = await axios.get(`${this.baseUrl}/dns/${zoneId}/record`, {
-                headers: this.headers(),
-                params: { recordType: 'TXT' }
-            });
-            const records = this.unwrap(resp).dnsRecords || [];
-            return records.filter(r => r.recordType === 'TXT');
-        } catch (e) {
-            console.error('Dynu Service Error (listTxtRecords):', e.message);
-            return [];
-        }
-    }
-
     async listRecords(zoneId, recordType) {
         try {
             const resp = await axios.get(`${this.baseUrl}/dns/${zoneId}/record`, {
                 headers: this.headers(),
-                params: { recordType }
+                params: { recordType },
+                timeout: 15000
             });
             const records = this.unwrap(resp).dnsRecords || [];
             return records.filter(r => r.recordType === recordType);
@@ -121,7 +108,7 @@ export default class DynuService {
                 ttl: 300,
                 state: true,
                 group: ''
-            }, { headers: this.headers() });
+            }, { headers: this.headers(), timeout: 15000 });
             const data = this.unwrap(resp);
             return { success: true, record: data };
         } catch (e) {
@@ -140,7 +127,7 @@ export default class DynuService {
                 ttl: 300,
                 state: true,
                 group: ''
-            }, { headers: this.headers() });
+            }, { headers: this.headers(), timeout: 15000 });
             const data = this.unwrap(resp);
             return { success: true, record: data };
         } catch (e) {
@@ -184,7 +171,7 @@ export default class DynuService {
 
     async deleteRecord(zoneId, recordId) {
         try {
-            await axios.delete(`${this.baseUrl}/dns/${zoneId}/record/${recordId}`, { headers: this.headers() });
+            await axios.delete(`${this.baseUrl}/dns/${zoneId}/record/${recordId}`, { headers: this.headers(), timeout: 15000 });
             return true;
         } catch (e) {
             console.error('Dynu Service Error (deleteRecord):', e.message);

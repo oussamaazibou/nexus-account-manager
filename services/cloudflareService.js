@@ -23,7 +23,8 @@ export default class CloudflareService {
                 params: {
                     name: domain,
                     status: 'active'
-                }
+                },
+                timeout: 15000
             });
 
             if (response.data.success && response.data.result.length > 0) {
@@ -51,7 +52,8 @@ export default class CloudflareService {
                     'X-Auth-Email': this.email,
                     'X-Auth-Key': this.apiKey,
                     'Content-Type': 'application/json'
-                }
+                },
+                timeout: 15000
             });
 
             if (response.data.success) {
@@ -82,7 +84,8 @@ export default class CloudflareService {
                     'X-Auth-Key': this.apiKey,
                     'Content-Type': 'application/json'
                 },
-                params: { type: 'TXT', name: recordName }
+                params: { type: 'TXT', name: recordName },
+                timeout: 15000
             });
             const existing = (listRes.data.result || []).find(r => r.content === token);
             if (existing) return { success: true, already: true };
@@ -95,7 +98,8 @@ export default class CloudflareService {
                         'X-Auth-Email': this.email,
                         'X-Auth-Key': this.apiKey,
                         'Content-Type': 'application/json'
-                    }
+                    },
+                    timeout: 15000
                 }).catch(() => {});
             }
 
@@ -121,7 +125,8 @@ export default class CloudflareService {
                     'X-Auth-Email': this.email,
                     'X-Auth-Key': this.apiKey,
                     'Content-Type': 'application/json'
-                }
+                },
+                timeout: 15000
             });
 
             if (response.data.success) {
