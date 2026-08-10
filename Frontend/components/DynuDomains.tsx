@@ -2,11 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 
 const API_URL = '/api';
 
-interface WorkspaceAccount {
+interface JobAccount {
     email: string;
-    password: string;
-    domain: string;
-    cached: boolean;
+    collection?: string;
+    status?: string;
 }
 
 interface DynuProvisioned {
@@ -39,8 +38,10 @@ const Spinner = ({ size = 14 }: { size?: number }) => (
 );
 
 const DynuDomains: React.FC = () => {
-    const [accounts, setAccounts] = useState<WorkspaceAccount[]>([]);
+    const [accounts, setAccounts] = useState<JobAccount[]>([]);
     const [selectedEmail, setSelectedEmail] = useState('');
+    const [searchText, setSearchText] = useState('');
+    const [searchOpen, setSearchOpen] = useState(false);
     const [store, setStore] = useState<DynuStore>({ baseDomains: [], provisioned: [] });
     const [baseDomainsText, setBaseDomainsText] = useState('');
     const [savingBases, setSavingBases] = useState(false);
@@ -56,15 +57,35 @@ const DynuDomains: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        fetch(`${API_URL}/manage/accounts`)
+        // Same source as the "List Accounts" page (/api/jobs -> accounts.txt)
+        fetch(`${API_URL}/jobs`)
             .then(r => r.ok ? r.json() : [])
-            .then((list: WorkspaceAccount[]) => {
-                setAccounts(list);
-                if (list.length && !selectedEmail) setSelectedEmail(list[0].email);
+            .then((list: any[]) => {
+                const seen = new Set<string>();
+                const accs: JobAccount[] = (Array.isArray(list) ? list : [])
+                    .map(j => ({
+                        email: j?.data?.userEmail || '',
+                        collection: j?.collection || 'Queue',
+                        status: j?.status || 'pending'
+                    }))
+                    .filter(a => a.email.includes('@') && !seen.has(a.email) && (seen.add(a.email), true));
+                setAccounts(accs);
+                if (accs.length && !selectedEmail) {
+                    setSelectedEmail(accs[0].email);
+                    setSearchText(accs[0].email);
+                }
             })
             .catch(() => {});
         loadStore();
     }, [loadStore]);
+
+    useEffect(() => {
+        setSearchText(selectedEmail);
+    }, [selectedEmail]);
+
+    const filteredAccounts = accounts.filter(a =>
+        a.email.toLowerCase().includes(searchText.trim().toLowerCase())
+    );
 
     const saveBaseDomains = async () => {
         const domains = baseDomainsText.split('\n').map(l => l.trim().toLowerCase()).filter(Boolean);
@@ -202,18 +223,43 @@ const DynuDomains: React.FC = () => {
                 <div className="lg:col-span-1 space-y-4">
                     <div className="glass-card p-5 space-y-4">
                         <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Target Workspace</h3>
-                        <select
-                            value={selectedEmail}
-                            onChange={e => setSelectedEmail(e.target.value)}
-                            className="w-full px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] appearance-none cursor-pointer"
-                        >
-                            {accounts.map(a => (
-                                <option key={a.email} value={a.email}>{a.email}</option>
-                            ))}
-                        </select>
-                        {accounts.length === 0 && (
-                            <p className="text-[11px] text-amber-400">No workspace accounts found — add some to result_accounts.txt</p>
-                        )}
+                        <div className="relative">
+                            <input
+                                value={searchText}
+                                onChange={e => { setSearchText(e.target.value); setSearchOpen(true); }}
+                                onFocus={() => setSearchOpen(true)}
+                                onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+                                placeholder="Type to search account…"
+                                className="w-full px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                            />
+                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-white/50">
+                                ▼
+                            </div>
+                            {searchOpen && (
+                                <div className="absolute z-50 mt-1 w-full max-h-64 overflow-y-auto rounded-xl bg-[#0f172a] border border-white/10 shadow-2xl">
+                                    {filteredAccounts.length === 0 && (
+                                        <div className="px-4 py-3 text-xs text-[var(--text-muted)]">No accounts match "{searchText}"</div>
+                                    )}
+                                    {filteredAccounts.map(a => (
+                                        <button
+                                            key={a.email}
+                                            onMouseDown={e => { e.preventDefault(); setSelectedEmail(a.email); setSearchText(a.email); setSearchOpen(false); }}
+                                            className={`w-full text-left px-4 py-2.5 text-sm font-mono hover:bg-indigo-500/15 transition-colors ${a.email === selectedEmail ? 'bg-indigo-500/10 text-indigo-300' : 'text-[var(--text-main)]'}`}
+                                        >
+                                            <span className="truncate">{a.email}</span>
+                                            {a.collection && a.collection !== 'Queue' && (
+                                                <span className="ml-2 text-[10px] uppercase tracking-widest text-[var(--text-muted)]">· {a.collection}</span>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <p className="text-[11px] text-[var(--text-muted)]">
+                            {accounts.length === 0
+                                ? 'No accounts found — add some to accounts.txt (List Accounts).'
+                                : `${accounts.length} account(s) from List Accounts. Selected: ${selectedEmail || '—'}`}
+                        </p>
                     </div>
 
                     <div className="glass-card p-5 space-y-4">
