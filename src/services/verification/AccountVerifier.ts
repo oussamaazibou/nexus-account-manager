@@ -11,6 +11,7 @@ import { SSHUploader } from '../../services/ssh/SSHUploader.js';
 import SMSService from '../../../services/smsService.js';
 import CaptchaService from '../../../services/captchaService.js';
 import CloudflareService from '../../../services/cloudflareService.js';
+import { upsertDnsTxt, upsertDnsMx } from '../../../services/dnsProvider.js';
 
 
 const HEADLESS = true; // Use headless for production/automation
@@ -1148,7 +1149,7 @@ export class AccountVerifier {
             if (isSuccess) {
                 Logger.info(`✅ Login/Verification Flow Complete: ${email} (at: ${finalUrl})`);
 
-                // ── FULL DOMAIN VERIFICATION WITH CLOUDFLARE ──────────────────────
+                // ── FULL DOMAIN VERIFICATION (CLOUDFLARE / DYNU) ─────────────────
                 try {
                     const fullDomain = email.split('@')[1]; // e.g. prime-learn.belvynteam.my.id
                     const parts = fullDomain.split('.');
@@ -1170,7 +1171,7 @@ export class AccountVerifier {
                             break;
                         }
                     }
-                    Logger.info(`☁️ Checking domain verification status: fullDomain=${fullDomain} root=${rootDomain}`);
+                    Logger.info(`🔍 Checking domain verification status: fullDomain=${fullDomain} root=${rootDomain}`);
 
                     // ── CHECK IF DOMAIN IS ALREADY VERIFIED ──────────────────────────
                     const isAlreadyVerified = await this.isDomainVerified(page, fullDomain, rootDomain, subDomain);
@@ -1348,144 +1349,141 @@ export class AccountVerifier {
                     if (txtRecord) {
                         Logger.info(`📝 TXT Record: ${txtRecord}`);
 
-                        // Step 5: Add TXT record to Cloudflare
-                        const zoneId = await this.cloudflareService.getZoneId(rootDomain);
-                        if (zoneId) {
-                            // recordName: use full domain (Cloudflare normalizes it relative to zone)
-                            const recordName = fullDomain;
-                            Logger.info(`📡 Adding TXT to Cloudflare zone ${zoneId}, name="${recordName}"...`);
-                            // Strip any surrounding quotes to prevent Cloudflare from keeping literal quotes
-                            const cleanedTxtRecord = txtRecord.replace(/^["']|["']$/g, '');
-                            const addResult = await this.cloudflareService.addTxtRecord(zoneId, recordName, cleanedTxtRecord);
-                            const alreadyExists = addResult.error && (addResult.error.includes('81058') || addResult.error.toLowerCase().includes('already exists'));
+                        // Step 5: Add TXT record to whichever DNS provider owns the zone
+                        // (Cloudflare first, Dynu fallback — see services/dnsProvider.js)
+                        // recordName: use full domain (the unique subdomain for Dynu)
+                        const recordName = fullDomain;
+                        // Strip any surrounding quotes to prevent literal quotes in the record
+                        const cleanedTxtRecord = txtRecord.replace(/^["']|["']$/g, '');
+                        const dnsConfig = this.loadConfig();
+                        const dnsLog = (msg: string) => Logger.info(msg);
+                        Logger.info(`📡 Adding TXT to DNS provider for name="${recordName}"...`);
+                        const addResult = await upsertDnsTxt(recordName, cleanedTxtRecord, dnsConfig, dnsLog);
 
-                            if (addResult.success || alreadyExists) {
-                                if (alreadyExists) {
-                                    Logger.info(`ℹ️ TXT record already exists in Cloudflare — proceeding with MX and verification...`);
-                                } else {
-                                    Logger.info(`✅ TXT record added to Cloudflare!`);
-                                }
-                                
-                                // --- ADD MX RECORD FOR GOOGLE WORKSPACE MAIL SERVER ---
-                                Logger.info(`📡 Adding MX to Cloudflare zone ${zoneId}, name="${recordName}" -> SMTP.GOOGLE.COM (Priority 1)...`);
-                                try {
-                                    const mxResult = await this.cloudflareService.addMxRecord(zoneId, recordName, 'SMTP.GOOGLE.COM', 1);
-                                    if (mxResult.success) {
-                                        Logger.info(`✅ MX record added to Cloudflare!`);
-                                    } else {
-                                        Logger.warn(`⚠️ Cloudflare MX add failed: ${mxResult.error}`);
-                                    }
-                                } catch (mxErr: any) {
-                                    Logger.warn(`⚠️ Failed to add MX record: ${mxErr.message}`);
-                                }
-
-                                Logger.info(`⏳ Waiting 15s for initial DNS propagation...`);
-                                await new Promise(r => setTimeout(r, 15000));
-
-                                // Retry loop to verify domain (handles DNS propagation lag)
-                                let verificationSuccessful = false;
-                                for (let verifyAttempt = 0; verifyAttempt < 4; verifyAttempt++) {
-                                    Logger.info(`🖱️ Clicking final Verify button (Attempt ${verifyAttempt + 1}/4)...`);
-                                    
-                                    // Step 6: Check all confirmation checkboxes if present (Evaluated to prevent Puppeteer click hangs)
-                                    try {
-                                        const clickedCount = await page.evaluate(() => {
-                                            const selectors = [
-                                                'input[type="checkbox"]',
-                                                '[role="checkbox"]',
-                                                '[class*="checkbox" i]',
-                                                '[id*="checkbox" i]'
-                                            ];
-                                            
-                                            const elements = new Set<HTMLElement>();
-                                            selectors.forEach(sel => {
-                                                document.querySelectorAll(sel).forEach(el => elements.add(el as HTMLElement));
-                                            });
-
-                                            const labels = ['i added', 'i have added', 'i saved', 'i have saved', 'i logged', 'i opened', 'added the txt', 'saved the txt'];
-                                            document.querySelectorAll('span, div, label, p').forEach(el => {
-                                                const txt = (el.textContent || '').toLowerCase();
-                                                if (labels.some(l => txt.includes(l))) {
-                                                    const cb = el.querySelector('input, [role="checkbox"]') || el.closest('label, div[role="button"]') || el;
-                                                    elements.add(cb as HTMLElement);
-                                                }
-                                            });
-
-                                            let clicked = 0;
-                                            elements.forEach(el => {
-                                                try {
-                                                    const rect = el.getBoundingClientRect();
-                                                    const isVisible = rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
-                                                    if (!isVisible) return;
-
-                                                    const isChecked = el.getAttribute('aria-checked') === 'true' || 
-                                                                      (el as HTMLInputElement).checked === true ||
-                                                                      el.classList.contains('is-checked') ||
-                                                                      el.classList.contains('checked');
-                                                    
-                                                    if (!isChecked) {
-                                                        el.click();
-                                                        clicked++;
-                                                    }
-                                                } catch (err) { }
-                                            });
-                                            return clicked;
-                                        });
-                                        if (clickedCount > 0) {
-                                            Logger.info(`☑️ Checked ${clickedCount} confirmation checkboxes`);
-                                            await new Promise(r => setTimeout(r, 1500));
-                                        }
-                                    } catch (checkboxErr) {
-                                        /* ignore */
-                                    }
-
-                                    // Step 7: Click final Verify button
-                                    const verified = await page.evaluate(() => {
-                                        const buttons = Array.from(document.querySelectorAll('button, div[role="button"]')) as HTMLElement[];
-                                        const btn = buttons.find(b => {
-                                            const t = (b.innerText || '').toLowerCase();
-                                            return (t.includes('verify') || t.includes('continue') || t.includes('activate') || t.includes('confirm')) && b.offsetParent !== null;
-                                        });
-                                        if (btn) { btn.click(); return true; }
-                                        return false;
-                                    });
-
-                                    if (verified) {
-                                        Logger.info(`✅ Final Verify clicked! Waiting 15s for response...`);
-                                        await new Promise(r => setTimeout(r, 15000));
-                                        await saveScreenshot('05_after_verify_response');
-                                        
-                                        const currentUrl = page.url();
-                                        const pageTextRaw = await page.evaluate(() => document.body.innerText).catch(() => '');
-                                        const pageText = pageTextRaw.toLowerCase();
-                                        Logger.info(`[Verify Response Text]: ${pageTextRaw.substring(0, 1000).replace(/\n+/g, ' ')}`);
-
-                                        const hasFailureText = pageText.includes("couldn't verify") || pageText.includes("could not verify") || pageText.includes("failed") || pageText.includes("try again") || pageText.includes("error") || pageText.includes("incorrect");
-                                        const hasSuccessText = pageText.includes('verified') || pageText.includes('congratulations') || pageText.includes('success') || pageText.includes('active') || pageText.includes('welcome') || pageText.includes('set up');
-                                        
-                                        // If page navigated away from codes page, or contains success text, AND does not contain failure text, verification succeeded!
-                                        if ((!currentUrl.includes('/codes') || hasSuccessText) && !hasFailureText) {
-                                            Logger.info(`🏁 Domain verification complete and successful! Final URL: ${currentUrl}`);
-                                            verificationSuccessful = true;
-                                            break;
-                                        } else {
-                                            Logger.warn(`⚠️ Verification not propagation/failed yet. URL is still: ${currentUrl}. Retrying in 20s...`);
-                                            await new Promise(r => setTimeout(r, 20000));
-                                        }
-                                    } else {
-                                        Logger.warn(`⚠️ Final Verify button not found or not clickable`);
-                                        break;
-                                    }
-                                }
-
-                                if (!verificationSuccessful) {
-                                    Logger.warn(`⚠️ Verification loop completed but URL is still /codes (might require manual check or more propagation time)`);
-                                }
+                        if (addResult.success) {
+                            if (addResult.already) {
+                                Logger.info(`ℹ️ TXT record already exists on ${addResult.provider} — proceeding with MX and verification...`);
                             } else {
-                                Logger.warn(`⚠️ Cloudflare TXT add failed: ${addResult.error}`);
+                                Logger.info(`✅ TXT record added on ${addResult.provider}!`);
+                            }
+
+                            // --- ADD MX RECORD FOR GOOGLE WORKSPACE MAIL SERVER ---
+                            Logger.info(`📡 Adding MX for name="${recordName}" -> SMTP.GOOGLE.COM (Priority 1) on ${addResult.provider}...`);
+                            try {
+                                const mxResult = await upsertDnsMx(recordName, dnsConfig, dnsLog);
+                                if (mxResult.success) {
+                                    Logger.info(`✅ MX record added on ${mxResult.provider}!`);
+                                } else {
+                                    Logger.warn(`⚠️ ${mxResult.provider || 'DNS'} MX add failed: ${mxResult.error}`);
+                                }
+                            } catch (mxErr: any) {
+                                Logger.warn(`⚠️ Failed to add MX record: ${mxErr.message}`);
+                            }
+
+                            Logger.info(`⏳ Waiting 15s for initial DNS propagation...`);
+                            await new Promise(r => setTimeout(r, 15000));
+
+                            // Retry loop to verify domain (handles DNS propagation lag)
+                            let verificationSuccessful = false;
+                            for (let verifyAttempt = 0; verifyAttempt < 4; verifyAttempt++) {
+                                Logger.info(`🖱️ Clicking final Verify button (Attempt ${verifyAttempt + 1}/4)...`);
+                                
+                                // Step 6: Check all confirmation checkboxes if present (Evaluated to prevent Puppeteer click hangs)
+                                try {
+                                    const clickedCount = await page.evaluate(() => {
+                                        const selectors = [
+                                            'input[type="checkbox"]',
+                                            '[role="checkbox"]',
+                                            '[class*="checkbox" i]',
+                                            '[id*="checkbox" i]'
+                                        ];
+                                        
+                                        const elements = new Set<HTMLElement>();
+                                        selectors.forEach(sel => {
+                                            document.querySelectorAll(sel).forEach(el => elements.add(el as HTMLElement));
+                                        });
+
+                                        const labels = ['i added', 'i have added', 'i saved', 'i have saved', 'i logged', 'i opened', 'added the txt', 'saved the txt'];
+                                        document.querySelectorAll('span, div, label, p').forEach(el => {
+                                            const txt = (el.textContent || '').toLowerCase();
+                                            if (labels.some(l => txt.includes(l))) {
+                                                const cb = el.querySelector('input, [role="checkbox"]') || el.closest('label, div[role="button"]') || el;
+                                                elements.add(cb as HTMLElement);
+                                            }
+                                        });
+
+                                        let clicked = 0;
+                                        elements.forEach(el => {
+                                            try {
+                                                const rect = el.getBoundingClientRect();
+                                                const isVisible = rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
+                                                if (!isVisible) return;
+
+                                                const isChecked = el.getAttribute('aria-checked') === 'true' || 
+                                                                  (el as HTMLInputElement).checked === true ||
+                                                                  el.classList.contains('is-checked') ||
+                                                                  el.classList.contains('checked');
+                                                
+                                                if (!isChecked) {
+                                                    el.click();
+                                                    clicked++;
+                                                }
+                                            } catch (err) { }
+                                        });
+                                        return clicked;
+                                    });
+                                    if (clickedCount > 0) {
+                                        Logger.info(`☑️ Checked ${clickedCount} confirmation checkboxes`);
+                                        await new Promise(r => setTimeout(r, 1500));
+                                    }
+                                } catch (checkboxErr) {
+                                    /* ignore */
+                                }
+
+                                // Step 7: Click final Verify button
+                                const verified = await page.evaluate(() => {
+                                    const buttons = Array.from(document.querySelectorAll('button, div[role="button"]')) as HTMLElement[];
+                                    const btn = buttons.find(b => {
+                                        const t = (b.innerText || '').toLowerCase();
+                                        return (t.includes('verify') || t.includes('continue') || t.includes('activate') || t.includes('confirm')) && b.offsetParent !== null;
+                                    });
+                                    if (btn) { btn.click(); return true; }
+                                    return false;
+                                });
+
+                                if (verified) {
+                                    Logger.info(`✅ Final Verify clicked! Waiting 15s for response...`);
+                                    await new Promise(r => setTimeout(r, 15000));
+                                    await saveScreenshot('05_after_verify_response');
+                                    
+                                    const currentUrl = page.url();
+                                    const pageTextRaw = await page.evaluate(() => document.body.innerText).catch(() => '');
+                                    const pageText = pageTextRaw.toLowerCase();
+                                    Logger.info(`[Verify Response Text]: ${pageTextRaw.substring(0, 1000).replace(/\n+/g, ' ')}`);
+
+                                    const hasFailureText = pageText.includes("couldn't verify") || pageText.includes("could not verify") || pageText.includes("failed") || pageText.includes("try again") || pageText.includes("error") || pageText.includes("incorrect");
+                                    const hasSuccessText = pageText.includes('verified') || pageText.includes('congratulations') || pageText.includes('success') || pageText.includes('active') || pageText.includes('welcome') || pageText.includes('set up');
+                                    
+                                    // If page navigated away from codes page, or contains success text, AND does not contain failure text, verification succeeded!
+                                    if ((!currentUrl.includes('/codes') || hasSuccessText) && !hasFailureText) {
+                                        Logger.info(`🏁 Domain verification complete and successful! Final URL: ${currentUrl}`);
+                                        verificationSuccessful = true;
+                                        break;
+                                    } else {
+                                        Logger.warn(`⚠️ Verification not propagation/failed yet. URL is still: ${currentUrl}. Retrying in 20s...`);
+                                        await new Promise(r => setTimeout(r, 20000));
+                                    }
+                                } else {
+                                    Logger.warn(`⚠️ Final Verify button not found or not clickable`);
+                                    break;
+                                }
+                            }
+
+                            if (!verificationSuccessful) {
+                                Logger.warn(`⚠️ Verification loop completed but URL is still /codes (might require manual check or more propagation time)`);
                             }
                         } else {
-                            Logger.warn(`⚠️ Zone ID not found on Cloudflare — tried: [${triedCandidates.join(', ')}] — domain not in CF account?`);
+                            Logger.warn(`⚠️ TXT add failed on DNS provider: ${addResult.error}`);
                         }
                     } else {
                         Logger.warn(`⚠️ TXT record not found on Admin Console page`);

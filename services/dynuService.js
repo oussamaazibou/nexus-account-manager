@@ -90,6 +90,28 @@ export default class DynuService {
         }
     }
 
+    async listRecords(zoneId, recordType) {
+        try {
+            const resp = await axios.get(`${this.baseUrl}/dns/${zoneId}/record`, {
+                headers: this.headers(),
+                params: { recordType }
+            });
+            const records = this.unwrap(resp).dnsRecords || [];
+            return records.filter(r => r.recordType === recordType);
+        } catch (e) {
+            console.error(`Dynu Service Error (list${recordType}Records):`, e.message);
+            return [];
+        }
+    }
+
+    async listTxtRecords(zoneId) {
+        return this.listRecords(zoneId, 'TXT');
+    }
+
+    async listMxRecords(zoneId) {
+        return this.listRecords(zoneId, 'MX');
+    }
+
     async addTxtRecord(zoneId, nodeName, textData) {
         try {
             const resp = await axios.post(`${this.baseUrl}/dns/${zoneId}/record`, {
@@ -106,6 +128,58 @@ export default class DynuService {
             console.error('Dynu Service Error (addTxtRecord):', e.message);
             return { success: false, error: e.message };
         }
+    }
+
+    async addMxRecord(zoneId, nodeName, host, priority = 1) {
+        try {
+            const resp = await axios.post(`${this.baseUrl}/dns/${zoneId}/record`, {
+                nodeName: nodeName || '',
+                recordType: 'MX',
+                host,
+                priority,
+                ttl: 300,
+                state: true,
+                group: ''
+            }, { headers: this.headers() });
+            const data = this.unwrap(resp);
+            return { success: true, record: data };
+        } catch (e) {
+            console.error('Dynu Service Error (addMxRecord):', e.message);
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
+     * Upsert an MX record pointing `recordName` at `host` with `priority`.
+     * No-op when an identical MX already exists; otherwise replaces any stale
+     * MX at the same node.
+     */
+    async upsertMx(recordName, host, priority = 1) {
+        const resolved = await this.findZoneId(recordName);
+        if (!resolved) return { success: false, error: `No Dynu zone found for ${recordName}` };
+
+        const { zoneId, node } = resolved;
+        const records = await this.listMxRecords(zoneId);
+        const lowerName = recordName.toLowerCase();
+        const matches = records.filter(r => {
+            const hostname = (r.hostname || '').toLowerCase();
+            const n = (r.nodeName || '').toLowerCase();
+            return hostname === lowerName || (node ? n === node.toLowerCase() : n === '');
+        });
+
+        const existing = matches.find(r =>
+            String(r.host || '').toUpperCase() === String(host).toUpperCase() &&
+            Number(r.priority) === Number(priority)
+        );
+        if (existing) return { success: true, provider: 'dynu', zoneId, already: true };
+
+        for (const rec of matches) {
+            await this.deleteRecord(zoneId, rec.id);
+        }
+
+        const added = await this.addMxRecord(zoneId, node, host, priority);
+        if (!added.success) return { success: false, error: added.error };
+        return { success: true, provider: 'dynu', zoneId };
     }
 
     async deleteRecord(zoneId, recordId) {

@@ -57,16 +57,16 @@ const DynuDomains: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        // Same source as the "List Accounts" page (/api/jobs -> accounts.txt)
-        fetch(`${API_URL}/jobs`)
+        // Result accounts (result_accounts.txt) — verified accounts ready for use
+        fetch(`${API_URL}/result-accounts`)
             .then(r => r.ok ? r.json() : [])
             .then((list: any[]) => {
                 const seen = new Set<string>();
                 const accs: JobAccount[] = (Array.isArray(list) ? list : [])
                     .map(j => ({
                         email: j?.data?.userEmail || '',
-                        collection: j?.collection || 'Queue',
-                        status: j?.status || 'pending'
+                        collection: j?.collection || 'Verified',
+                        status: j?.status || 'completed'
                     }))
                     .filter(a => a.email.includes('@') && !seen.has(a.email) && (seen.add(a.email), true));
                 setAccounts(accs);
@@ -257,8 +257,8 @@ const DynuDomains: React.FC = () => {
                         </div>
                         <p className="text-[11px] text-[var(--text-muted)]">
                             {accounts.length === 0
-                                ? 'No accounts found — add some to accounts.txt (List Accounts).'
-                                : `${accounts.length} account(s) from List Accounts. Selected: ${selectedEmail || '—'}`}
+                                ? 'No verified accounts found — run List Accounts to populate result_accounts.txt.'
+                                : `${accounts.length} verified account(s) from Result Accounts. Selected: ${selectedEmail || '—'}`}
                         </p>
                     </div>
 
