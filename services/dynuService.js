@@ -48,6 +48,22 @@ export default class DynuService {
     }
 
     /**
+     * Dynu free dynamic-DNS top-level domains (e.g. dynu.com, dynu.net,
+     * dynuddns.net, ...). The apex of these belongs to Dynu itself, so an
+     * account never owns a bare matching zone — each created host is its own
+     * zone. Used to detect that Dynu manages a domain before the host exists.
+     */
+    async listTopLevels() {
+        try {
+            const resp = await axios.get(`${this.baseUrl}/dns/toplevel`, { headers: this.headers(), timeout: 15000 });
+            return this.unwrap(resp).topLevels || [];
+        } catch (e) {
+            console.error('Dynu Service Error (listTopLevels):', e.message);
+            return [];
+        }
+    }
+
+    /**
      * Resolve the zone that hosts `domain` and the node name relative to it.
      * Returns { zoneId, zoneName, node } or null when Dynu does not manage it.
      */
@@ -190,7 +206,13 @@ export default class DynuService {
      * MX at the same node.
      */
     async upsertMx(recordName, host, priority = 1) {
-        const resolved = await this.findZoneId(recordName);
+        let resolved = await this.findZoneId(recordName);
+        if (!resolved) {
+            for (let i = 0; i < 3 && !resolved; i++) {
+                await new Promise(r => setTimeout(r, 1500));
+                resolved = await this.findZoneId(recordName);
+            }
+        }
         if (!resolved) return { success: false, error: `No Dynu zone found for ${recordName}` };
 
         const { zoneId, node } = resolved;
@@ -233,7 +255,15 @@ export default class DynuService {
      * google-site-verification= record for the hostname and add the new one.
      */
     async upsertTxt(recordName, token) {
-        const resolved = await this.findZoneId(recordName);
+        let resolved = await this.findZoneId(recordName);
+        if (!resolved) {
+            // The host may have just been created via POST /dns — give Dynu a
+            // moment before giving up.
+            for (let i = 0; i < 3 && !resolved; i++) {
+                await new Promise(r => setTimeout(r, 1500));
+                resolved = await this.findZoneId(recordName);
+            }
+        }
         if (!resolved) return { success: false, error: `No Dynu zone found for ${recordName}` };
 
         const { zoneId, node } = resolved;

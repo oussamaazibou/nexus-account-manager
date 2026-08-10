@@ -45,6 +45,21 @@ export async function detectDnsProvider(domain, config = {}) {
             if (resolved) {
                 return { provider: 'dynu', zoneId: resolved.zoneId, zoneName: resolved.zoneName, node: resolved.node, dynu: { service: dynu } };
             }
+            // Dynu free dynamic-DNS domains (dynu.net, dynuddns.net, ...): the
+            // apex belongs to Dynu, so no account zone matches until the host is
+            // created. Detect ownership from the top-levels list instead.
+            const topLevels = await dynu.listTopLevels();
+            const ownedTl = topLevels.find(tl => lower === tl.toLowerCase() || lower.endsWith('.' + tl.toLowerCase()));
+            if (ownedTl) {
+                return {
+                    provider: 'dynu',
+                    zoneId: null,
+                    zoneName: ownedTl.toLowerCase(),
+                    node: lower.slice(0, -(ownedTl.length + 1)),
+                    freeDomain: true,
+                    dynu: { service: dynu }
+                };
+            }
         } catch (e) {
             console.warn(`[DNS] Dynu detection error: ${e.message}`);
         }

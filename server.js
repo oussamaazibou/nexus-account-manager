@@ -2956,26 +2956,33 @@ app.post('/api/dynu/provision', async (req, res) => {
         let dynuHost = null;
 
         if (det.provider) {
-            dynuLog('INFO', `🌐 Provider detected: ${det.provider}${det.zoneName ? ` (zone: ${det.zoneName})` : ''}`);
+            dynuLog('INFO', `🌐 Provider detected: ${det.provider}${det.zoneName ? ` (zone: ${det.zoneName})` : ''}${det.freeDomain ? ' (Dynu free domain)' : ''}`);
         } else {
-            dynuLog('WARN', `⚠️ No Cloudflare or Dynu zone found for ${subdomain}`);
+            dynuLog('INFO', `🌐 No zone match yet for ${subdomain} — checking Dynu dynamic-DNS ownership`);
         }
 
-        // 4a) For Dynu, create the Dynamic DNS host for the generated subdomain
-        //     (API equivalent of "Add Dynamic DNS" in the dashboard) so the
-        //     host exists before TXT/MX records are added.
-        if (det.provider === 'dynu' && det.dynu?.service) {
-            dynuLog('INFO', `🏠 Creating Dynamic DNS host ${subdomain} in Dynu (POST /v2/dns)...`);
-            const hostRes = await det.dynu.service.ensureHost(subdomain);
-            if (hostRes.success) {
-                dynuHost = { created: true, already: !!hostRes.already, zoneId: hostRes.zoneId || null };
-                dynuLog('INFO', `✅ Dynamic DNS host ready: ${subdomain}${hostRes.already ? ' (already existed)' : ''}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
-            } else {
-                dynuLog('ERROR', `❌ Could not create Dynamic DNS host for ${subdomain}: ${hostRes.error}`);
+        // 4a) For Dynu — or when no provider matched and a Dynu key exists —
+        //     create the Dynamic DNS host for the generated subdomain (API
+        //     equivalent of "Add Dynamic DNS" in the dashboard). Dynu free
+        //     domains (dynu.net, dynuddns.net, ...) have no apex zone in the
+        //     account, so the host must exist before TXT records can be placed.
+        const needDynuHost = det.provider === 'dynu' || (!det.provider && !!(config.dynuApiKey || '').trim());
+        if (needDynuHost) {
+            const dynuService = det.dynu?.service || (await import('./services/dynuService.js')).default;
+            if (dynuService) {
+                dynuLog('INFO', `🏠 Creating Dynamic DNS host ${subdomain} in Dynu (POST /v2/dns)...`);
+                const hostRes = await dynuService.ensureHost(subdomain);
+                if (hostRes.success) {
+                    dynuHost = { created: true, already: !!hostRes.already, zoneId: hostRes.zoneId || null };
+                    provider = 'dynu';
+                    dynuLog('INFO', `✅ Dynamic DNS host ready: ${subdomain}${hostRes.already ? ' (already existed)' : ''}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
+                } else {
+                    dynuLog('ERROR', `❌ Could not create Dynamic DNS host for ${subdomain}: ${hostRes.error}`);
+                }
             }
         }
 
-        if (det.provider) {
+        if (provider) {
             dynuLog('INFO', `✏️ Upserting TXT record for ${subdomain}...`);
             const dnsRes = await upsertDnsTxt(subdomain, txtToken, config, (m) => dynuLog('INFO', m));
             if (dnsRes.success) {

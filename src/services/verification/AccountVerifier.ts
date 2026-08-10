@@ -11,7 +11,7 @@ import { SSHUploader } from '../../services/ssh/SSHUploader.js';
 import SMSService from '../../../services/smsService.js';
 import CaptchaService from '../../../services/captchaService.js';
 import CloudflareService from '../../../services/cloudflareService.js';
-import { upsertDnsTxt, upsertDnsMx } from '../../../services/dnsProvider.js';
+import { detectDnsProvider, upsertDnsTxt, upsertDnsMx } from '../../../services/dnsProvider.js';
 
 
 const HEADLESS = true; // Use headless for production/automation
@@ -1357,6 +1357,27 @@ export class AccountVerifier {
                         const cleanedTxtRecord = txtRecord.replace(/^["']|["']$/g, '');
                         const dnsConfig = this.loadConfig();
                         const dnsLog = (msg: string) => Logger.info(msg);
+
+                        // Dynu free dynamic-DNS domains (dynu.net, dynuddns.net, ...)
+                        // have no apex zone in the account until the specific host is
+                        // created — so create the Dynamic DNS host first (the API
+                        // equivalent of "Add Dynamic DNS" in the dashboard).
+                        try {
+                            const det = await detectDnsProvider(recordName, dnsConfig);
+                            if (det.provider === 'dynu' && det.freeDomain && det.dynu?.service) {
+                                const hostRes = await det.dynu.service.ensureHost(recordName);
+                                if (hostRes.success) {
+                                    Logger.info(hostRes.already
+                                        ? `ℹ️ Dynu host already exists: ${recordName}`
+                                        : `✅ Dynu Dynamic DNS host created: ${recordName}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
+                                } else {
+                                    Logger.warn(`⚠️ Could not create Dynu Dynamic DNS host for ${recordName}: ${hostRes.error}`);
+                                }
+                            }
+                        } catch (hostErr: any) {
+                            Logger.warn(`⚠️ Dynu host ensure failed: ${hostErr.message}`);
+                        }
+
                         Logger.info(`📡 Adding TXT to DNS provider for name="${recordName}"...`);
                         const addResult = await upsertDnsTxt(recordName, cleanedTxtRecord, dnsConfig, dnsLog);
 
