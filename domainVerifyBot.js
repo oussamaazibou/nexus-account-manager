@@ -15,6 +15,7 @@ import axios from 'axios';
 import { fileURLToPath } from 'url';
 import genOtp from './generateOTP.cjs';
 import cSolver from './captchaSolver.cjs';
+import { upsertDnsTxt } from './services/dnsProvider.js';
 
 const { solveGoogleLoginCaptchaIfPresent } = cSolver;
 
@@ -252,44 +253,24 @@ async function extractTxtToken(page) {
     }).catch(() => null);
 }
 
-// ── Best-effort Cloudflare TXT upsert (same logic as /api/manage/verify-domain) ──
-async function upsertCloudflareTxt(domainName, txtToken, log = () => {}) {
+// ── Best-effort DNS TXT upsert (Cloudflare or Dynu, same logic as the
+//    /api/manage/verify-domain endpoint) ──────────────────────────────────────
+async function upsertDnsTxtRecord(domainName, txtToken, log = () => {}) {
     try {
         const configPath = path.join(__dirname, 'config.json');
         if (!fs.existsSync(configPath)) return false;
         const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        const cfEmail = config.cloudflareEmail;
-        const cfKey = config.cloudflareKey;
-        if (!cfEmail || !cfKey) return false;
+        if (!config.cloudflareEmail && !config.dynuApiKey) return false;
 
-        const cfHeaders = { 'X-Auth-Email': cfEmail, 'X-Auth-Key': cfKey, 'Content-Type': 'application/json' };
-        const zoneParts = domainName.split('.').slice(-2).join('.');
-        const zoneRes = await axios.get(`https://api.cloudflare.com/client/v4/zones?name=${zoneParts}`, { headers: cfHeaders });
-        const zoneId = zoneRes.data.result?.[0]?.id;
-        if (!zoneId) {
-            log(`[Verify] No Cloudflare zone found for ${domainName} (tried ${zoneParts})`);
-            return false;
-        }
-        const txtRes = await axios.get(
-            `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records?type=TXT&name=${domainName}`,
-            { headers: cfHeaders }
-        );
-        const existing = (txtRes.data.result || []).find(r => r.content === txtToken);
-        if (existing) {
-            log(`[Verify] TXT record already present for ${domainName}`);
+        const res = await upsertDnsTxt(domainName, txtToken, config, log);
+        if (res.success) {
+            log(`[Verify] TXT record upserted in ${res.provider.toUpperCase()} for ${domainName}`);
             return true;
         }
-        const old = (txtRes.data.result || []).find(r => r.content.startsWith('google-site-verification='));
-        if (old) await axios.delete(`https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records/${old.id}`, { headers: cfHeaders }).catch(() => {});
-        await axios.post(
-            `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records`,
-            { type: 'TXT', name: domainName, content: txtToken, ttl: 1 },
-            { headers: cfHeaders }
-        );
-        log(`[Verify] TXT record upserted in Cloudflare for ${domainName}`);
-        return true;
+        log(`[Verify] ${res.error}`);
+        return false;
     } catch (e) {
-        log(`[Verify] Cloudflare upsert warning: ${e.message}`);
+        log(`[Verify] DNS upsert warning: ${e.message}`);
         return false;
     }
 }
@@ -585,7 +566,7 @@ async function verifyDomainOnPage(page, domain, keyData, adminEmail, log = () =>
     const token = await extractTxtToken(page);
     if (token) {
         log(`[Verify] TXT token present for ${domain}`);
-        const ok = await upsertCloudflareTxt(domain, token, log);
+        const ok = await upsertDnsTxtRecord(domain, token, log);
         if (ok) await sleep(4000);
     } else {
         log(`[Verify] No TXT token extractable for ${domain} — DNS may already be configured`);

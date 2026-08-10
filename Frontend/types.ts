@@ -27,6 +27,7 @@ export interface AppSettings {
   cloudflareEmail?: string;
   cloudflareKey?: string;
   cloudflareZoneId?: string;
+  dynuApiKey?: string;
   telegramToken?: string;
   telegramChatId?: string;
   proxiesList?: string;
@@ -60,4 +61,4 @@ export interface AppSettings {
   nicnamesKey?: string;
 }
 
-export type ViewType = 'DASHBOARD' | 'QUEUE' | 'OPERATIONS' | 'SETTINGS' | 'VALID_ACCOUNTS' | 'PHONE_VERIFY' | 'MANAGE_ACCOUNTS' | 'UPLOAD_JSON' | 'APP_PASSWORDS' | 'APP_USERS' | 'ONLINE_USERS' | 'ARCHIVE_ACCOUNTS' | 'CREATE_USERS' | 'DOMAINS' | 'MANUAL_OTP';
+export type ViewType = 'DASHBOARD' | 'QUEUE' | 'OPERATIONS' | 'SETTINGS' | 'VALID_ACCOUNTS' | 'PHONE_VERIFY' | 'MANAGE_ACCOUNTS' | 'UPLOAD_JSON' | 'APP_PASSWORDS' | 'APP_USERS' | 'ONLINE_USERS' | 'ARCHIVE_ACCOUNTS' | 'CREATE_USERS' | 'DOMAINS' | 'MANUAL_OTP' | 'DYNU_DOMAINS';

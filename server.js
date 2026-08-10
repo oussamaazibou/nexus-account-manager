@@ -536,6 +536,19 @@ app.post('/api/test/telegram', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/test/dynu', async (req, res) => {
+    try {
+        const { key } = req.body;
+        if (!key) return res.status(400).json({ error: 'API key required' });
+        const response = await axios.get('https://api.dynu.com/v2/dns', {
+            headers: { 'API-Key': key, accept: 'application/json' }
+        });
+        if (response.data.exception) throw new Error(response.data.exception.message || 'Invalid API key');
+        const count = (response.data.domains || []).length;
+        res.json({ success: true, message: `Connected — ${count} DNS zone(s)` });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/manual-otp', async (req, res) => {
     try {
         const { email, secretKey } = req.body;
@@ -2623,54 +2636,54 @@ app.post('/api/manage/add-domain', async (req, res) => {
             console.log(`[Manage] 📝 Token received: ${txtRecord}`);
 
             const configPath = path.join(__dirname, 'config.json');
-            let cfEmail, cfKey;
+            let config = {};
             if (fs.existsSync(configPath)) {
-                const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-                cfEmail = config.cloudflareEmail;
-                cfKey = config.cloudflareKey;
+                config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
             }
 
-            if (cfEmail && cfKey) {
-                const CloudflareService = (await import('./services/cloudflareService.js')).default;
-                const cf = new CloudflareService(cfEmail, cfKey);
-                // Use the root domain part to find the zone ID if it's a subdomain
-                const zoneParts = domainName.split('.').slice(-2).join('.');
-                const zoneId = await cf.getZoneId(zoneParts) || await cf.getZoneId(domainName);
+            if (config.cloudflareEmail || config.dynuApiKey) {
+                const { detectDnsProvider, upsertDnsTxt } = await import('./services/dnsProvider.js');
+                const det = await detectDnsProvider(domainName, config);
+                if (det.provider) {
+                    const icon = det.provider === 'cloudflare' ? '☁️' : '🌐';
+                    console.log(`[Manage] ${icon} Detected ${det.provider.toUpperCase()} for ${domainName}`);
+                    const dnsRes = await upsertDnsTxt(domainName, txtRecord, config, (m) => console.log(`[Manage] ${m}`));
 
-                if (zoneId) {
-                    console.log(`[Manage] ☁️ Adding TXT record to Cloudflare zone ${zoneId}...`);
-                    await cf.addTxtRecord(zoneId, domainName, txtRecord);
-                    console.log(`[Manage] ✅ TXT Record added! Waiting 10s for propagation...`);
+                    if (dnsRes.success) {
+                        console.log(`[Manage] ✅ TXT Record added to ${dnsRes.provider.toUpperCase()}! Waiting 10s for propagation...`);
 
-                    await new Promise(r => setTimeout(r, 10000));
+                        await new Promise(r => setTimeout(r, 10000));
 
-                    console.log(`[Manage] 🔄 Triggering Google Site Verification Check...`);
-                    await siteVerification.webResource.insert({
-                        verificationMethod: 'DNS_TXT',
-                        requestBody: {
-                            site: { identifier: domainName, type: 'INET_DOMAIN' }
+                        console.log(`[Manage] 🔄 Triggering Google Site Verification Check...`);
+                        await siteVerification.webResource.insert({
+                            verificationMethod: 'DNS_TXT',
+                            requestBody: {
+                                site: { identifier: domainName, type: 'INET_DOMAIN' }
+                            }
+                        });
+                        console.log(`[Manage] 🎉 Google Site Verification Completed for ${domainName}!`);
+                        
+                        // Force Google Workspace to sync
+                        const authDir = new google.auth.JWT({
+                            email: keyData.client_email,
+                            key: keyData.private_key,
+                            scopes: ['https://www.googleapis.com/auth/admin.directory.domain'],
+                            subject: adminEmail
+                        });
+                        const adminDir = google.admin({ version: 'directory_v1', auth: authDir });
+                        for (let i = 0; i < 5; i++) {
+                            if (i > 0) await new Promise(r => setTimeout(r, 6000));
+                            const domRes = await adminDir.domains.get({ customer: 'my_customer', domainName });
+                            if (domRes.data.verified) break;
                         }
-                    });
-                    console.log(`[Manage] 🎉 Google Site Verification Completed for ${domainName}!`);
-                    
-                    // Force Google Workspace to sync
-                    const authDir = new google.auth.JWT({
-                        email: keyData.client_email,
-                        key: keyData.private_key,
-                        scopes: ['https://www.googleapis.com/auth/admin.directory.domain'],
-                        subject: adminEmail
-                    });
-                    const adminDir = google.admin({ version: 'directory_v1', auth: authDir });
-                    for (let i = 0; i < 5; i++) {
-                        if (i > 0) await new Promise(r => setTimeout(r, 6000));
-                        const domRes = await adminDir.domains.get({ customer: 'my_customer', domainName });
-                        if (domRes.data.verified) break;
+                    } else {
+                        console.log(`[Manage] ⚠️ DNS upsert warning: ${dnsRes.error}`);
                     }
                 } else {
-                    console.log(`[Manage] ⚠️ Cloudflare zone not found for ${domainName}, skipping auto-verification.`);
+                    console.log(`[Manage] ⚠️ No Cloudflare or Dynu zone found for ${domainName}, skipping auto-verification.`);
                 }
             } else {
-                console.log(`[Manage] ⚠️ Cloudflare config missing in config.json. Skipping auto-verification.`);
+                console.log(`[Manage] ⚠️ DNS config missing in config.json. Skipping auto-verification.`);
             }
         } catch (verErr) {
             console.error(`[Manage] ⚠️ Auto-verification error: ${verErr.message}`);
@@ -2713,48 +2726,27 @@ app.post('/api/manage/verify-domain', async (req, res) => {
         const txtToken = tokenRes.data.token;
         console.log(`[Verify] Token for ${domainName}: ${txtToken}`);
 
-        // Step 2: Upsert the TXT record in Cloudflare with the exact token
+        // Step 2: Upsert the TXT record on whichever DNS provider owns the zone
         const configPath = path.join(__dirname, 'config.json');
+        let config = {};
         if (fs.existsSync(configPath)) {
-            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            const cfEmail = config.cloudflareEmail;
-            const cfKey = config.cloudflareKey;
-            if (cfEmail && cfKey) {
-                try {
-                    const cfHeaders = { 'X-Auth-Email': cfEmail, 'X-Auth-Key': cfKey, 'Content-Type': 'application/json' };
-                    // Find zone for this domain
-                    const zoneParts = domainName.split('.').slice(-2).join('.');
-                    const zoneRes = await axios.get(`https://api.cloudflare.com/client/v4/zones?name=${zoneParts}`, { headers: cfHeaders });
-                    const zoneId = zoneRes.data.result?.[0]?.id;
-                    if (zoneId) {
-                        // List existing TXT records for this domain
-                        const txtRes = await axios.get(
-                            `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records?type=TXT&name=${domainName}`,
-                            { headers: cfHeaders }
-                        );
-                        const existing = (txtRes.data.result || []).find(r => r.content === txtToken);
-                        if (!existing) {
-                            // Delete any old google-site-verification record for this name first
-                            const old = (txtRes.data.result || []).find(r => r.content.startsWith('google-site-verification='));
-                            if (old) {
-                                await axios.delete(`https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records/${old.id}`, { headers: cfHeaders }).catch(() => {});
-                            }
-                            // Add the correct token
-                            await axios.post(
-                                `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records`,
-                                { type: 'TXT', name: domainName, content: txtToken, ttl: 1 },
-                                { headers: cfHeaders }
-                            );
-                            console.log(`[Verify] TXT record added to Cloudflare for ${domainName}`);
-                            // Wait for Cloudflare propagation
-                            await new Promise(r => setTimeout(r, 10000));
-                        } else {
-                            console.log(`[Verify] Correct TXT record already in Cloudflare for ${domainName}`);
-                        }
-                    }
-                } catch (cfErr) {
-                    console.warn(`[Verify] Cloudflare upsert warning: ${cfErr.message}`);
+            config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        }
+        if (config.cloudflareEmail || config.dynuApiKey) {
+            try {
+                const { upsertDnsTxt } = await import('./services/dnsProvider.js');
+                const dnsRes = await upsertDnsTxt(domainName, txtToken, config, (m) => console.log(`[Verify] ${m}`));
+                if (dnsRes.success && !dnsRes.already) {
+                    console.log(`[Verify] TXT record added to ${dnsRes.provider.toUpperCase()} for ${domainName}`);
+                    // Wait for DNS propagation
+                    await new Promise(r => setTimeout(r, 10000));
+                } else if (dnsRes.success) {
+                    console.log(`[Verify] Correct TXT record already present in ${dnsRes.provider.toUpperCase()} for ${domainName}`);
+                } else {
+                    console.warn(`[Verify] DNS upsert warning: ${dnsRes.error}`);
                 }
+            } catch (dnsErr) {
+                console.warn(`[Verify] DNS upsert warning: ${dnsErr.message}`);
             }
         }
 
@@ -2821,6 +2813,162 @@ app.post('/api/manage/verify-domain', async (req, res) => {
     } catch (e) {
         const errMsg = e.response?.data?.error?.message || e.response?.data?.error || e.errors?.[0]?.message || e.message;
         console.error(`[Verify] ❌ ${errMsg}`);
+        res.status(500).json({ error: errMsg });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// ── DYNU DOMAINS ────────────────────────────────────────────────────────
+// Base domains are manually entered on the Dynu Domains page. Each base
+// domain gets a unique generated subdomain (e.g. `x7k2q9.example.com`) that
+// is added to a Workspace account as a domain alias, then verified through
+// whatever DNS provider owns the zone (Cloudflare or Dynu).
+// ═══════════════════════════════════════════════════════════════════════
+const DYNU_DOMAINS_PATH = path.join(__dirname, 'dynu_domains.json');
+
+function readDynuDomainsStore() {
+    if (!fs.existsSync(DYNU_DOMAINS_PATH)) return { baseDomains: [], provisioned: [] };
+    try { return JSON.parse(fs.readFileSync(DYNU_DOMAINS_PATH, 'utf8')); }
+    catch (e) { return { baseDomains: [], provisioned: [] }; }
+}
+
+function writeDynuDomainsStore(store) {
+    fs.writeFileSync(DYNU_DOMAINS_PATH, JSON.stringify(store, null, 2));
+}
+
+// List stored base domains + provisioned subdomains
+app.get('/api/dynu/domains', (req, res) => {
+    res.json(readDynuDomainsStore());
+});
+
+// Store base domains (manually entered; merged, deduplicated)
+app.post('/api/dynu/domains', (req, res) => {
+    try {
+        const { baseDomains } = req.body;
+        if (!baseDomains || !Array.isArray(baseDomains)) return res.status(400).json({ error: 'baseDomains array required' });
+        const store = readDynuDomainsStore();
+        for (const d of baseDomains) {
+            const clean = String(d).trim().toLowerCase();
+            if (clean.includes('.') && !store.baseDomains.includes(clean)) store.baseDomains.push(clean);
+        }
+        writeDynuDomainsStore(store);
+        res.json({ success: true, baseDomains: store.baseDomains });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Remove a base domain and its provisioned subdomains
+app.delete('/api/dynu/domains', (req, res) => {
+    try {
+        const { baseDomain } = req.body;
+        const store = readDynuDomainsStore();
+        store.baseDomains = store.baseDomains.filter(d => d !== baseDomain);
+        store.provisioned = store.provisioned.filter(p => p.baseDomain !== baseDomain);
+        writeDynuDomainsStore(store);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Generate a unique subdomain for a base domain, add it to the workspace as a
+// domain alias, and auto-verify it through the detected DNS provider.
+app.post('/api/dynu/provision', async (req, res) => {
+    try {
+        const { adminEmail, baseDomain } = req.body;
+        if (!adminEmail || !baseDomain) return res.status(400).json({ error: 'adminEmail, baseDomain required' });
+
+        const cleanBase = String(baseDomain).trim().toLowerCase();
+        if (!cleanBase.includes('.')) return res.status(400).json({ error: 'Invalid base domain' });
+
+        const { google } = await import('googleapis');
+        const keyData = await getKeyData(adminEmail);
+
+        const configPath = path.join(__dirname, 'config.json');
+        let config = {};
+        if (fs.existsSync(configPath)) config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+        // 1) Generate a unique subdomain under the base domain
+        const prefix = Math.random().toString(36).slice(2, 8).toLowerCase();
+        const subdomain = `${prefix}.${cleanBase}`;
+
+        // 2) Add the subdomain to the Workspace account as a domain alias
+        const auth = new google.auth.JWT({
+            email: keyData.client_email,
+            key: keyData.private_key,
+            scopes: ['https://www.googleapis.com/auth/admin.directory.domain'],
+            subject: adminEmail
+        });
+        const admin = google.admin({ version: 'directory_v1', auth });
+        await admin.domains.insert({ customer: 'my_customer', requestBody: { domainName: subdomain } });
+        console.log(`[Dynu] ✅ Subdomain added: ${subdomain} to ${adminEmail}`);
+
+        // 3) Fetch the exact verification token Google expects
+        const siteVerification = google.siteVerification({
+            version: 'v1',
+            auth: new google.auth.JWT({
+                email: keyData.client_email,
+                key: keyData.private_key,
+                scopes: ['https://www.googleapis.com/auth/siteverification'],
+                subject: adminEmail
+            })
+        });
+        const tokenRes = await siteVerification.webResource.getToken({
+            requestBody: { verificationMethod: 'DNS_TXT', site: { identifier: subdomain, type: 'INET_DOMAIN' } }
+        });
+        const txtToken = tokenRes.data.token;
+        console.log(`[Dynu] 📝 Token received for ${subdomain}`);
+
+        // 4) Auto-detect the DNS provider (Cloudflare first, then Dynu) & upsert TXT
+        const { detectDnsProvider, upsertDnsTxt } = await import('./services/dnsProvider.js');
+        const det = await detectDnsProvider(subdomain, config);
+        let provider = det.provider;
+        let verified = false;
+
+        if (det.provider) {
+            const dnsRes = await upsertDnsTxt(subdomain, txtToken, config, (m) => console.log(`[Dynu] ${m}`));
+            if (dnsRes.success) {
+                if (!dnsRes.already) await new Promise(r => setTimeout(r, 10000));
+                // 5) Trigger Google Site Verification with retries
+                for (let i = 0; i < 4; i++) {
+                    try {
+                        if (i > 0) await new Promise(r => setTimeout(r, 15000));
+                        await siteVerification.webResource.insert({
+                            verificationMethod: 'DNS_TXT',
+                            requestBody: { site: { identifier: subdomain, type: 'INET_DOMAIN' } }
+                        });
+                        verified = true;
+                        break;
+                    } catch (e) {
+                        const errMsg = e.response?.data?.error?.message || e.message;
+                        console.warn(`[Dynu] webResource.insert attempt ${i + 1} failed: ${errMsg}`);
+                    }
+                }
+            } else {
+                console.warn(`[Dynu] TXT upsert failed: ${dnsRes.error}`);
+            }
+        } else {
+            console.warn(`[Dynu] No Cloudflare or Dynu zone found for ${subdomain} — subdomain added but not verified`);
+        }
+
+        // 6) Persist to the store
+        const store = readDynuDomainsStore();
+        if (!store.baseDomains.includes(cleanBase)) store.baseDomains.push(cleanBase);
+        store.provisioned.push({
+            baseDomain: cleanBase,
+            subdomain,
+            adminEmail,
+            provider,
+            verified,
+            createdAt: new Date().toISOString()
+        });
+        writeDynuDomainsStore(store);
+
+        res.json({ success: true, subdomain, provider, verified });
+    } catch (e) {
+        const errMsg = e.response?.data?.error?.message || e.response?.data?.error || e.message;
+        console.error(`[Dynu] ❌ Provision error: ${errMsg}`);
         res.status(500).json({ error: errMsg });
     }
 });

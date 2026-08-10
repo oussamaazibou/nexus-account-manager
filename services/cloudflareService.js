@@ -71,6 +71,41 @@ export default class CloudflareService {
         }
     }
 
+    async upsertTxt(zoneId, recordName, token) {
+        try {
+            console.log(`☁️  Upserting TXT record ${recordName} -> ${token}`);
+
+            // List existing TXT records for this exact name
+            const listRes = await axios.get(`${this.baseUrl}/zones/${zoneId}/dns_records`, {
+                headers: {
+                    'X-Auth-Email': this.email,
+                    'X-Auth-Key': this.apiKey,
+                    'Content-Type': 'application/json'
+                },
+                params: { type: 'TXT', name: recordName }
+            });
+            const existing = (listRes.data.result || []).find(r => r.content === token);
+            if (existing) return { success: true, already: true };
+
+            // Remove any stale google-site-verification record for this name first
+            const old = (listRes.data.result || []).find(r => r.content.startsWith('google-site-verification='));
+            if (old) {
+                await axios.delete(`${this.baseUrl}/zones/${zoneId}/dns_records/${old.id}`, {
+                    headers: {
+                        'X-Auth-Email': this.email,
+                        'X-Auth-Key': this.apiKey,
+                        'Content-Type': 'application/json'
+                    }
+                }).catch(() => {});
+            }
+
+            return this.addTxtRecord(zoneId, recordName, token);
+        } catch (error) {
+            console.error('Cloudflare Service Error (upsertTxt):', error.message);
+            return { success: false, error: error.message };
+        }
+    }
+
     async addMxRecord(zoneId, recordName, mailServer, priority = 1) {
         try {
             console.log(`☁️  Adding MX record to Zone ${zoneId}: ${recordName} -> ${mailServer} (Priority: ${priority})`);

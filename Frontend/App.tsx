@@ -16,6 +16,7 @@ import ArchiveAccounts from './components/ArchiveAccounts';
 import CreateUsers from './components/CreateUsers';
 import Domains from './components/Domains';
 import ManualOTP from './components/ManualOTP';
+import DynuDomains from './components/DynuDomains';
 
 const API_URL = '/api';
 
@@ -85,6 +86,7 @@ const VIEW_PATHS: Record<string, string> = {
   ARCHIVE_ACCOUNTS: '/archive-accounts',
   CREATE_USERS: '/create-users',
   DOMAINS: '/domains',
+  DYNU_DOMAINS: '/dynu-domains',
   MANUAL_OTP: '/manual-otp'
 };
 
@@ -113,6 +115,7 @@ const App: React.FC = () => {
   const [settings, setSettings]               = useState<AppSettings>({
     proxiesEnabled: true, headlessMode: true,
     cloudflareEmail: '', cloudflareKey: '', cloudflareZoneId: '',
+    dynuApiKey: '',
     telegramToken: '', telegramChatId: '',
     proxiesList: '', heroSmsKey: '', heroSmsUrl: ''
   });
@@ -352,7 +355,7 @@ const App: React.FC = () => {
     UPLOAD_JSON: 'Upload JSON', SETTINGS: 'Settings',
     APP_USERS: 'App Users', ONLINE_USERS: 'Online Sessions',
     ARCHIVE_ACCOUNTS: 'Archive Accounts', CREATE_USERS: 'Create Users',
-    DOMAINS: 'Domains', MANUAL_OTP: 'Manual OTP Keys',
+    DOMAINS: 'Domains', DYNU_DOMAINS: 'Dynu Domains', MANUAL_OTP: 'Manual OTP Keys',
   };
 
   return (
@@ -396,6 +399,7 @@ const App: React.FC = () => {
           {hasPermission('UPLOAD_JSON')     && <NavItem active={activeView==='UPLOAD_JSON'}     onClick={()=>navigate('UPLOAD_JSON')}     icon={Ico.upload}   label="Upload JSON"      mini={mini} />}
           {hasPermission('CREATE_USERS')     && <NavItem active={activeView==='CREATE_USERS'}    onClick={()=>navigate('CREATE_USERS')}    icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>} label="Create Users" mini={mini} />}
           {hasPermission('DOMAINS')          && <NavItem active={activeView==='DOMAINS'}          onClick={()=>navigate('DOMAINS')}          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>} label="Domains" mini={mini} />}
+          {hasPermission('DOMAINS')          && <NavItem active={activeView==='DYNU_DOMAINS'}   onClick={()=>navigate('DYNU_DOMAINS')}   icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M3.5 7h17M3.5 17h17"/></svg>} label="Dynu Domains" mini={mini} />}
 
           {(hasPermission('APP_USERS') || hasPermission('MANUAL_OTP')) && <>
             {!mini && <div className="nav-section" style={{ marginTop: 8 }}>Administration</div>}
@@ -486,6 +490,7 @@ const App: React.FC = () => {
           {activeView==='ARCHIVE_ACCOUNTS' && hasPermission('VALID_ACCOUNTS')  && <ArchiveAccounts />}
           {activeView==='CREATE_USERS'    && hasPermission('CREATE_USERS')    && <CreateUsers />}
           {activeView==='DOMAINS'         && hasPermission('DOMAINS')         && <Domains />}
+          {activeView==='DYNU_DOMAINS'    && hasPermission('DOMAINS')         && <DynuDomains />}
           {activeView==='MANUAL_OTP'      && hasPermission('MANUAL_OTP')      && <ManualOTP />}
         </main>
       </div>

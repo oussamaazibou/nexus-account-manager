@@ -109,6 +109,20 @@ const Settings: React.FC<SettingsProps> = ({ settings: globalSettings, setSettin
         </SettingsCard>
 
         <SettingsCard
+          icon={<div className="text-cyan-400"><Icons.Cloud /></div>}
+          title="Dynu"
+          subtitle="DNS Service"
+        >
+          <div className="space-y-6 mt-10">
+            <ModernInput label="API Key" placeholder="••••••••••••••••" type="password" value={localSettings.dynuApiKey || ''} onChange={(v) => updateField('dynuApiKey', v)} />
+            <div className="flex justify-between items-center pt-2">
+              <button onClick={() => testService('dynu', 'dynu', { key: localSettings.dynuApiKey })} className="text-[10px] uppercase font-bold text-cyan-400 hover:text-cyan-300 transition-colors bg-cyan-500/10 px-3 py-1 rounded">Test Auth</button>
+              {testResult?.service === 'dynu' && <span className="text-[10px] text-white/70 animate-pulse">{testResult.message}</span>}
+            </div>
+          </div>
+        </SettingsCard>
+
+        <SettingsCard
           icon={<div className="text-emerald-500"><Icons.Shield /></div>}
           title="Hero-SMS"
           subtitle="Identity Verification"
