@@ -2889,6 +2889,27 @@ app.delete('/api/dynu/domains', (req, res) => {
     }
 });
 
+// Manual "Clear" button: remove every provisioned subdomain from the list.
+// Base domains are kept.
+app.delete('/api/dynu/domains/provisioned', (req, res) => {
+    try {
+        const store = readDynuDomainsStore();
+        const count = store.provisioned.length;
+        store.provisioned = [];
+        writeDynuDomainsStore(store);
+        dynuLog('INFO', `🧹 Cleared ${count} provisioned subdomain(s) (manual Clear)`);
+        res.json({ success: true, cleared: count });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Manual "Clear" button: empty the Dynu activity log buffer.
+app.delete('/api/dynu/logs', (req, res) => {
+    dynuLogBuffer.length = 0;
+    res.json({ success: true });
+});
+
 // Construct a Dynu API client from the saved config, or null when no key set.
 async function getDynuService() {
     const configPath = path.join(__dirname, 'config.json');

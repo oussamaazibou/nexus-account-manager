@@ -18,7 +18,7 @@ const LiveOperations: React.FC<LiveOperationsProps> = ({ accounts, onVerify }) =
   const [logsPanel, setLogsPanel] = useState<{ email: string; accountId: string } | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const logsScrollRef = useRef<HTMLDivElement>(null);
   const logsPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const toast = (msg: string, type: 'ok'|'err'|'info' = 'info') => {
@@ -53,21 +53,21 @@ const LiveOperations: React.FC<LiveOperationsProps> = ({ accounts, onVerify }) =
     if (logsPollRef.current) clearInterval(logsPollRef.current);
   };
 
-  // Auto-scroll to bottom when logs update
+  // Auto-scroll ONLY the log panel's own container when it updates — never the page.
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = logsScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [logs]);
 
-  // Poll logs every 2s while panel is open and account is active
+  // Poll logs every 2s while the panel is open, regardless of account status,
+  // so real-time jobs (bulk verify AND domain-verify) stream live.
   useEffect(() => {
     if (!logsPanel) { if (logsPollRef.current) clearInterval(logsPollRef.current); return; }
     if (logsPollRef.current) clearInterval(logsPollRef.current);
-    const acc = accounts.find(a => a.id === logsPanel.accountId);
-    if (acc?.status === AccountStatus.VERIFYING) {
-      logsPollRef.current = setInterval(() => fetchLogs(logsPanel.email), 2000);
-    }
+    fetchLogs(logsPanel.email);
+    logsPollRef.current = setInterval(() => fetchLogs(logsPanel.email), 2000);
     return () => { if (logsPollRef.current) clearInterval(logsPollRef.current); };
-  }, [logsPanel, accounts]);
+  }, [logsPanel]);
 
   const filteredAccounts = useMemo(() => {
     const list = accounts.filter(a => a.status !== AccountStatus.PENDING);
@@ -283,7 +283,7 @@ const LiveOperations: React.FC<LiveOperationsProps> = ({ accounts, onVerify }) =
             </div>
 
             {/* Log body */}
-            <div style={{ flex:1, overflowY:'auto', padding:'12px 16px', fontFamily:'JetBrains Mono,monospace', fontSize:11, lineHeight:1.7, background:'var(--bg)' }}>
+            <div ref={logsScrollRef} style={{ flex:1, overflowY:'auto', padding:'12px 16px', fontFamily:'JetBrains Mono,monospace', fontSize:11, lineHeight:1.7, background:'var(--bg)' }}>
               {logsLoading && logs.length === 0 ? (
                 <div style={{ textAlign:'center', color:'var(--text2)', padding:'40px 0' }}>
                   <svg className="animate-spin" style={{display:'inline-block'}} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
@@ -309,7 +309,6 @@ const LiveOperations: React.FC<LiveOperationsProps> = ({ accounts, onVerify }) =
                   );
                 })
               )}
-              <div ref={logsEndRef} />
             </div>
 
             {/* Footer */}

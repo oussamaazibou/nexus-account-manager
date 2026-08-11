@@ -597,11 +597,16 @@ export async function verifyUnverifiedDomains(account, opts = {}) {
         unverifiedDomains = [],
         keyData = null,
         adminEmail = account.email,
-        log = () => {},
+        log: rawLog = () => {},
         shouldStop = () => false,
         proxy = null,
     } = opts;
     const { email, password } = account;
+
+    // Prefix every log line with the account email so the server's console
+    // interceptor routes them into the per-account live-monitor log for this
+    // account (the monitor polls /api/logs?email=...).
+    const log = (m) => rawLog(`[${email}] ${m}`);
 
     const results = [];
     let browser = null;

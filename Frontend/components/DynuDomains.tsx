@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 const API_URL = '/api';
-const PAGE_SIZE = 25;
+const PAGE_SIZE_DEFAULT = 25;
 
 interface JobAccount {
     email: string;
@@ -100,6 +100,8 @@ const DynuDomains: React.FC = () => {
     const [removingBase, setRemovingBase] = useState<string | null>(null);
     const [provisioning, setProvisioning] = useState<string | null>(null);
     const [verifying, setVerifying] = useState<string | null>(null);
+    const [clearingProvisioned, setClearingProvisioned] = useState(false);
+    const [clearingLogs, setClearingLogs] = useState(false);
 
     // Bulk provision
     const [bulkText, setBulkText] = useState('');
@@ -119,6 +121,7 @@ const DynuDomains: React.FC = () => {
     const [managerLoading, setManagerLoading] = useState(false);
     const [managerError, setManagerError] = useState('');
     const [managerPage, setManagerPage] = useState(1);
+    const [managerPageSize, setManagerPageSize] = useState<number | 'all'>(PAGE_SIZE_DEFAULT);
     const [selectedZones, setSelectedZones] = useState<Set<number>>(new Set());
     const [deletingZones, setDeletingZones] = useState(false);
     const [openZones, setOpenZones] = useState<Set<number>>(new Set());
@@ -197,9 +200,10 @@ const DynuDomains: React.FC = () => {
     }, [bulkMode, bulkDomainsText, store.baseDomains]);
 
     useEffect(() => {
-        const tp = Math.max(1, Math.ceil(managerDomains.length / PAGE_SIZE));
+        const n = managerPageSize === 'all' ? managerDomains.length : managerPageSize;
+        const tp = Math.max(1, Math.ceil(managerDomains.length / n));
         if (managerPage > tp) setManagerPage(tp);
-    }, [managerDomains.length, managerPage]);
+    }, [managerDomains.length, managerPage, managerPageSize]);
 
     const filteredAccounts = accounts.filter(a =>
         a.email.toLowerCase().includes(searchText.trim().toLowerCase())
@@ -336,6 +340,45 @@ const DynuDomains: React.FC = () => {
             toast(`Error: ${e.message}`, 'err');
         } finally {
             setVerifying(null);
+        }
+    };
+
+    // ── Manual Clear buttons ─────────────────────────────────────────────
+    const clearProvisioned = async () => {
+        if (!store.provisioned.length) return;
+        if (!window.confirm(`Clear all ${store.provisioned.length} provisioned subdomain(s) from the list?\nBase domains are kept.`)) return;
+        setClearingProvisioned(true);
+        try {
+            const res = await fetch(`${API_URL}/dynu/domains/provisioned`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                setStore(prev => ({ ...prev, provisioned: [] }));
+                toast('Provisioned subdomains cleared', 'ok');
+            } else {
+                toast(`Error: ${data.error}`, 'err');
+            }
+        } catch (e: any) {
+            toast(`Error: ${e.message}`, 'err');
+        } finally {
+            setClearingProvisioned(false);
+        }
+    };
+
+    const clearLogs = async () => {
+        setClearingLogs(true);
+        try {
+            const res = await fetch(`${API_URL}/dynu/logs`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                setLogs([]);
+                toast('Activity log cleared', 'ok');
+            } else {
+                toast(`Error: ${data.error}`, 'err');
+            }
+        } catch (e: any) {
+            toast(`Error: ${e.message}`, 'err');
+        } finally {
+            setClearingLogs(false);
         }
     };
 
@@ -514,8 +557,9 @@ const DynuDomains: React.FC = () => {
         }
     };
 
-    const totalPages = Math.max(1, Math.ceil(managerDomains.length / PAGE_SIZE));
-    const pageDomains = managerDomains.slice((managerPage - 1) * PAGE_SIZE, managerPage * PAGE_SIZE);
+    const pageSizeNum = managerPageSize === 'all' ? Number.POSITIVE_INFINITY : managerPageSize;
+    const totalPages = Math.max(1, Math.ceil(managerDomains.length / pageSizeNum));
+    const pageDomains = managerDomains.slice((managerPage - 1) * pageSizeNum, managerPage * pageSizeNum);
 
     const baseCount = store.baseDomains.length;
     const provisionedCount = store.provisioned.length;
@@ -730,7 +774,18 @@ const DynuDomains: React.FC = () => {
                 {/* RIGHT: provisioned subdomains */}
                 <div className="lg:col-span-2 space-y-4">
                     <div className="glass-card p-5 space-y-4">
-                        <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Provisioned Subdomains</h3>
+                        <div className="flex items-center justify-between">
+                            <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Provisioned Subdomains</h3>
+                            {store.provisioned.length > 0 && (
+                                <button
+                                    onClick={clearProvisioned}
+                                    disabled={clearingProvisioned}
+                                    className="px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 font-black text-[11px] transition-all disabled:opacity-50"
+                                >
+                                    {clearingProvisioned ? <Spinner size={11} /> : `🧹 Clear (${store.provisioned.length})`}
+                                </button>
+                            )}
+                        </div>
                         {store.provisioned.length === 0 && (
                             <div className="text-center py-10 text-[var(--text-muted)] text-sm">
                                 No subdomains provisioned yet.
@@ -800,12 +855,21 @@ const DynuDomains: React.FC = () => {
                             </span>
                         )}
                     </button>
-                    <button
-                        onClick={loadLogs}
-                        className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] font-black text-[10px] uppercase transition-all"
-                    >
-                        Refresh
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={loadLogs}
+                            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] font-black text-[10px] uppercase transition-all"
+                        >
+                            Refresh
+                        </button>
+                        <button
+                            onClick={clearLogs}
+                            disabled={clearingLogs || logs.length === 0}
+                            className="px-2 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 font-black text-[10px] uppercase transition-all disabled:opacity-40"
+                        >
+                            {clearingLogs ? <Spinner size={10} /> : 'Clear'}
+                        </button>
+                    </div>
                 </div>
                 {logsOpen && (
                     <div ref={logScrollRef} className="h-56 overflow-y-auto rounded-xl bg-black/40 border border-white/5 p-3 font-mono text-[11px] leading-relaxed space-y-1">
@@ -856,9 +920,22 @@ const DynuDomains: React.FC = () => {
                         {/* Selection + Pagination */}
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <span className="text-[11px] text-[var(--text-muted)]">
-                                Showing {(managerPage - 1) * PAGE_SIZE + 1}–{Math.min(managerPage * PAGE_SIZE, managerDomains.length)} of {managerDomains.length} domains
+                                {managerPageSize === 'all'
+                                    ? `Showing all ${managerDomains.length} domain${managerDomains.length === 1 ? '' : 's'}`
+                                    : `Showing ${(managerPage - 1) * managerPageSize + 1}–${Math.min(managerPage * managerPageSize, managerDomains.length)} of ${managerDomains.length} domains`}
                             </span>
                             <div className="flex flex-wrap items-center gap-2">
+                                <select
+                                    value={String(managerPageSize)}
+                                    onChange={e => setManagerPageSize(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                                    className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[var(--text-muted)] font-black text-[11px] focus:outline-none"
+                                    title="Rows per page"
+                                >
+                                    <option value="25">25 / page</option>
+                                    <option value="50">50 / page</option>
+                                    <option value="100">100 / page</option>
+                                    <option value="all">All</option>
+                                </select>
                                 <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] font-black text-[11px] cursor-pointer select-none">
                                     <input type="checkbox" checked={pageDomains.length > 0 && pageDomains.every(z => selectedZones.has(z.id))} onChange={toggleSelectAllPage} className="accent-indigo-500" />
                                     Select page
