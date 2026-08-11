@@ -3061,37 +3061,52 @@ app.post('/api/dynu/provision', async (req, res) => {
 });
 
 // Bulk provision: paste multiple workspace accounts; each gets its own unique
-// subdomain under the same base domain, processed sequentially.
+// subdomain, processed sequentially. Mode 'single' puts every account under the
+// same base domain; mode 'rotate' cycles accounts through a list of base
+// domains (account i -> baseDomains[i % baseDomains.length]).
 app.post('/api/dynu/provision/bulk', async (req, res) => {
     try {
-        const { adminEmails, baseDomain } = req.body;
+        const { adminEmails, baseDomain, baseDomains, mode = 'single' } = req.body;
         const emails = (Array.isArray(adminEmails) ? adminEmails : [])
             .map(e => String(e).trim().toLowerCase())
             .filter(e => e.includes('@'));
-        if (!emails.length || !baseDomain) return res.status(400).json({ error: 'adminEmails (non-empty) and baseDomain required' });
+        if (!emails.length) return res.status(400).json({ error: 'adminEmails (non-empty) required' });
 
-        const cleanBase = String(baseDomain).trim().toLowerCase();
-        if (!cleanBase.includes('.')) return res.status(400).json({ error: 'Invalid base domain' });
+        // Resolve the domain list for this run.
+        let domains;
+        if (mode === 'rotate') {
+            domains = (Array.isArray(baseDomains) ? baseDomains : [])
+                .map(d => String(d).trim().toLowerCase())
+                .filter(d => d.includes('.'));
+            if (!domains.length) return res.status(400).json({ error: 'rotate mode requires baseDomains (non-empty)' });
+        } else {
+            if (!baseDomain) return res.status(400).json({ error: 'baseDomain required (single mode)' });
+            const clean = String(baseDomain).trim().toLowerCase();
+            if (!clean.includes('.')) return res.status(400).json({ error: 'Invalid base domain' });
+            domains = [clean];
+        }
 
-        dynuLog('INFO', `🚀 Bulk provision start | accounts=${emails.length} | base=${cleanBase}`);
+        dynuLog('INFO', `🚀 Bulk provision start | mode=${mode} | accounts=${emails.length} | domains=${domains.length}${mode === 'rotate' ? ` (${domains.join(', ')})` : ` (${domains[0]})`}`);
 
         const results = [];
         for (let i = 0; i < emails.length; i++) {
             const email = emails[i];
-            dynuLog('INFO', `🚀 Bulk ${i + 1}/${emails.length} | ${email}`);
+            // Rotation: each account picks the next domain in sequence.
+            const target = domains[i % domains.length];
+            dynuLog('INFO', `🚀 Bulk ${i + 1}/${emails.length} | ${email} | -> ${target}`);
             try {
-                const r = await provisionSubdomain(email, cleanBase);
-                results.push({ email, ...r });
+                const r = await provisionSubdomain(email, target);
+                results.push({ email, baseDomain: target, ...r });
             } catch (e) {
                 const errMsg = e.response?.data?.error?.message || e.response?.data?.error || e.message;
                 dynuLog('ERROR', `❌ Bulk provision failed for ${email}: ${errMsg}`);
-                results.push({ email, success: false, error: errMsg });
+                results.push({ email, baseDomain: target, success: false, error: errMsg });
             }
         }
 
         const okCount = results.filter(r => r.success).length;
-        dynuLog('INFO', `🚀 Bulk provision finished | ok=${okCount}/${results.length}`);
-        res.json({ success: true, baseDomain: cleanBase, results });
+        dynuLog('INFO', `🚀 Bulk provision finished | mode=${mode} | ok=${okCount}/${results.length}`);
+        res.json({ success: true, mode, results });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -3109,6 +3124,27 @@ app.get('/api/dynu/manage/domains', async (req, res) => {
         if (!svc) return res.status(400).json({ success: false, error: "Dynu API key not set — configure it in Settings" });
         const domains = await svc.listZones();
         res.json({ success: true, domains });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Delete one or many Dynu domains (zones) from the DNS service.
+// Removes the domain and all of its records.
+app.delete('/api/dynu/manage/domains', async (req, res) => {
+    try {
+        const { zoneIds } = req.body;
+        const ids = (Array.isArray(zoneIds) ? zoneIds : [zoneIds]).map(Number).filter(n => Number.isInteger(n) && n > 0);
+        if (!ids.length) return res.status(400).json({ success: false, error: 'zoneIds array required' });
+        const svc = await getDynuService();
+        if (!svc) return res.status(400).json({ success: false, error: "Dynu API key not set — configure it in Settings" });
+        const results = [];
+        for (const zoneId of ids) {
+            const ok = await svc.deleteZone(zoneId);
+            results.push({ zoneId, success: ok });
+        }
+        const okCount = results.filter(r => r.success).length;
+        res.json({ success: true, ok: okCount, results });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }

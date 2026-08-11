@@ -365,6 +365,20 @@ export default class DynuService {
         }
     }
 
+    /**
+     * Remove a domain entirely from Dynu DNS service (DELETE /dns/{id}).
+     * Deletes the zone and all of its records.
+     */
+    async deleteZone(zoneId) {
+        try {
+            await axios.delete(`${this.baseUrl}/dns/${zoneId}`, { headers: this.headers(), timeout: 15000 });
+            return true;
+        } catch (e) {
+            console.error('Dynu Service Error (deleteZone):', e.message);
+            return false;
+        }
+    }
+
     async addARecord(zoneId, nodeName, ipv4Address) {
         try {
             const resp = await axios.post(`${this.baseUrl}/dns/${zoneId}/record`, {

@@ -32,6 +32,7 @@ interface DynuStore {
 
 interface BulkResult {
     email: string;
+    baseDomain?: string;
     success?: boolean;
     subdomain?: string;
     verified?: boolean;
@@ -102,7 +103,9 @@ const DynuDomains: React.FC = () => {
 
     // Bulk provision
     const [bulkText, setBulkText] = useState('');
+    const [bulkMode, setBulkMode] = useState<'single' | 'rotate'>('single');
     const [bulkBaseDomain, setBulkBaseDomain] = useState('');
+    const [bulkDomainsText, setBulkDomainsText] = useState('');
     const [bulking, setBulking] = useState(false);
     const [bulkResults, setBulkResults] = useState<BulkResult[]>([]);
 
@@ -116,6 +119,8 @@ const DynuDomains: React.FC = () => {
     const [managerLoading, setManagerLoading] = useState(false);
     const [managerError, setManagerError] = useState('');
     const [managerPage, setManagerPage] = useState(1);
+    const [selectedZones, setSelectedZones] = useState<Set<number>>(new Set());
+    const [deletingZones, setDeletingZones] = useState(false);
     const [openZones, setOpenZones] = useState<Set<number>>(new Set());
     const [zoneRecords, setZoneRecords] = useState<Record<number, DynuDnsRecord[]>>({});
     const [recordsLoading, setRecordsLoading] = useState<Record<number, boolean>>({});
@@ -184,6 +189,17 @@ const DynuDomains: React.FC = () => {
     useEffect(() => {
         if (!bulkBaseDomain && store.baseDomains.length) setBulkBaseDomain(store.baseDomains[0]);
     }, [store.baseDomains, bulkBaseDomain]);
+
+    useEffect(() => {
+        if (bulkMode === 'rotate' && !bulkDomainsText.trim() && store.baseDomains.length) {
+            setBulkDomainsText(store.baseDomains.join('\n'));
+        }
+    }, [bulkMode, bulkDomainsText, store.baseDomains]);
+
+    useEffect(() => {
+        const tp = Math.max(1, Math.ceil(managerDomains.length / PAGE_SIZE));
+        if (managerPage > tp) setManagerPage(tp);
+    }, [managerDomains.length, managerPage]);
 
     const filteredAccounts = accounts.filter(a =>
         a.email.toLowerCase().includes(searchText.trim().toLowerCase())
@@ -266,14 +282,24 @@ const DynuDomains: React.FC = () => {
     const runBulkProvision = async () => {
         const emails = bulkText.split('\n').map(l => l.trim().toLowerCase()).filter(e => e.includes('@'));
         if (!emails.length) return toast('Paste at least one account email (one per line)', 'err');
-        if (!bulkBaseDomain) return toast('Select a base domain first', 'err');
+
+        let payload: any;
+        if (bulkMode === 'rotate') {
+            const domains = bulkDomainsText.split('\n').map(l => l.trim().toLowerCase()).filter(d => d.includes('.'));
+            if (!domains.length) return toast('Paste at least one domain (one per line) for rotation', 'err');
+            payload = { adminEmails: emails, baseDomains: domains, mode: 'rotate' };
+        } else {
+            if (!bulkBaseDomain) return toast('Select a base domain first', 'err');
+            payload = { adminEmails: emails, baseDomain: bulkBaseDomain, mode: 'single' };
+        }
+
         setBulking(true);
         setBulkResults(emails.map(e => ({ email: e, success: false, status: 'queued' })));
         try {
             const res = await fetch(`${API_URL}/dynu/provision/bulk`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ adminEmails: emails, baseDomain: bulkBaseDomain })
+                body: JSON.stringify(payload)
             });
             const data = await res.json();
             if (data.success) {
@@ -333,6 +359,62 @@ const DynuDomains: React.FC = () => {
             setManagerError(e.message);
         } finally {
             setManagerLoading(false);
+        }
+    };
+
+    const toggleSelectAllPage = () => {
+        const pageIds = pageDomains.map(z => z.id);
+        const allSelected = pageIds.length > 0 && pageIds.every(id => selectedZones.has(id));
+        setSelectedZones(prev => {
+            const next = new Set(prev);
+            if (allSelected) pageIds.forEach(id => next.delete(id));
+            else pageIds.forEach(id => next.add(id));
+            return next;
+        });
+    };
+
+    const toggleZoneSelected = (zoneId: number) => {
+        setSelectedZones(prev => {
+            const next = new Set(prev);
+            if (next.has(zoneId)) next.delete(zoneId);
+            else next.add(zoneId);
+            return next;
+        });
+    };
+
+    const deleteZones = async (ids: number[]) => {
+        if (!ids.length) return;
+        if (!window.confirm(`Delete ${ids.length} domain(s) from Dynu DNS service?\nThis removes the domains and ALL their records — cannot be undone.`)) return;
+        setDeletingZones(true);
+        try {
+            const res = await fetch(`${API_URL}/dynu/manage/domains`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ zoneIds: ids })
+            });
+            const data = await res.json();
+            if (data.success) {
+                const deleted = new Set<number>((data.results || []).filter((r: any) => r.success).map((r: any) => Number(r.zoneId)));
+                setManagerDomains(prev => prev.filter(z => !deleted.has(z.id)));
+                setZoneRecords(prev => {
+                    const n = { ...prev };
+                    deleted.forEach(id => delete n[id]);
+                    return n;
+                });
+                setOpenZones(prev => {
+                    const n = new Set(prev);
+                    deleted.forEach(id => n.delete(id));
+                    return n;
+                });
+                setSelectedZones(new Set());
+                toast(`Deleted ${deleted.size}/${ids.length} domain(s)`, 'ok');
+            } else {
+                toast(`Error: ${data.error}`, 'err');
+            }
+        } catch (e: any) {
+            toast(`Error: ${e.message}`, 'err');
+        } finally {
+            setDeletingZones(false);
         }
     };
 
@@ -518,6 +600,23 @@ const DynuDomains: React.FC = () => {
 
                     <div className="glass-card p-5 space-y-4">
                         <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Bulk Provision</h3>
+
+                        {/* Mode toggle: one domain vs rotate through many */}
+                        <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-black/30 border border-white/10">
+                            <button
+                                onClick={() => setBulkMode('single')}
+                                className={`py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${bulkMode === 'single' ? 'bg-indigo-600 text-white shadow' : 'text-[var(--text-muted)] hover:text-white'}`}
+                            >
+                                One Domain
+                            </button>
+                            <button
+                                onClick={() => setBulkMode('rotate')}
+                                className={`py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${bulkMode === 'rotate' ? 'bg-indigo-600 text-white shadow' : 'text-[var(--text-muted)] hover:text-white'}`}
+                            >
+                                Rotate Domains
+                            </button>
+                        </div>
+
                         <textarea
                             rows={5}
                             placeholder={'admin@workspace1.com\nadmin@workspace2.com\nadmin@workspace3.com\none-per-line'}
@@ -526,22 +625,40 @@ const DynuDomains: React.FC = () => {
                             style={{ resize: 'vertical' }}
                             className="w-full px-4 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
                         />
-                        <select
-                            value={bulkBaseDomain}
-                            onChange={e => setBulkBaseDomain(e.target.value)}
-                            className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] font-mono"
-                        >
-                            {store.baseDomains.length === 0 && <option value="">No base domains — add one below</option>}
-                            {store.baseDomains.map(d => <option key={d} value={d}>{d}</option>)}
-                        </select>
+
+                        {bulkMode === 'single' ? (
+                            <select
+                                value={bulkBaseDomain}
+                                onChange={e => setBulkBaseDomain(e.target.value)}
+                                className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] font-mono"
+                            >
+                                {store.baseDomains.length === 0 && <option value="">No base domains — add one below</option>}
+                                {store.baseDomains.map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                        ) : (
+                            <textarea
+                                rows={4}
+                                placeholder={'example.com\nanother.org\none-per-line'}
+                                value={bulkDomainsText}
+                                onChange={e => setBulkDomainsText(e.target.value)}
+                                style={{ resize: 'vertical' }}
+                                className="w-full px-4 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                            />
+                        )}
+
                         <button
                             onClick={runBulkProvision}
-                            disabled={bulking || !bulkText.trim() || !bulkBaseDomain}
+                            disabled={bulking || !bulkText.trim() || (bulkMode === 'single' ? !bulkBaseDomain : !bulkDomainsText.trim())}
                             className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-sm transition-all disabled:opacity-50"
                         >
                             {bulking ? <span className="inline-flex items-center gap-2"><Spinner size={13} /> Processing…</span> : `⚡ Run Bulk Provision (${bulkText.split('\n').filter(l => l.includes('@')).length})`}
                         </button>
-                        <p className="text-[10px] text-[var(--text-muted)]">Each pasted account gets its own unique subdomain under the selected base domain. Live progress shows in the Activity Log below.</p>
+                        <p className="text-[10px] text-[var(--text-muted)]">
+                            {bulkMode === 'single'
+                                ? 'Each pasted account gets its own unique subdomain under the selected base domain.'
+                                : 'Accounts rotate through the domains: account 1 → domain 1, account 2 → domain 2, … wrapping around.'}
+                            {' '}Live progress shows in the Activity Log below.
+                        </p>
 
                         {bulkResults.length > 0 && (
                             <div className="space-y-1.5 rounded-xl bg-black/30 border border-white/5 p-3 max-h-56 overflow-y-auto">
@@ -554,6 +671,7 @@ const DynuDomains: React.FC = () => {
                                         <span className={`shrink-0 ${r.success ? 'text-emerald-400' : 'text-rose-400'}`}>{r.success ? '✓' : '✕'}</span>
                                         <span className="flex-1 truncate text-[var(--text-muted)]">{r.email}</span>
                                         {r.subdomain && <span className="truncate text-cyan-400">{r.subdomain}</span>}
+                                        {r.baseDomain && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-[var(--text-muted)]">{r.baseDomain}</span>}
                                         {r.error && <span className="truncate text-rose-400">{r.error}</span>}
                                     </div>
                                 ))}
@@ -735,12 +853,33 @@ const DynuDomains: React.FC = () => {
 
                 {managerDomains.length > 0 && (
                     <>
-                        {/* Pagination */}
+                        {/* Selection + Pagination */}
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <span className="text-[11px] text-[var(--text-muted)]">
                                 Showing {(managerPage - 1) * PAGE_SIZE + 1}–{Math.min(managerPage * PAGE_SIZE, managerDomains.length)} of {managerDomains.length} domains
                             </span>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] font-black text-[11px] cursor-pointer select-none">
+                                    <input type="checkbox" checked={pageDomains.length > 0 && pageDomains.every(z => selectedZones.has(z.id))} onChange={toggleSelectAllPage} className="accent-indigo-500" />
+                                    Select page
+                                </label>
+                                {selectedZones.size > 0 && (
+                                    <>
+                                        <button
+                                            onClick={() => setSelectedZones(new Set())}
+                                            className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] font-black text-[11px] transition-all"
+                                        >
+                                            Clear ({selectedZones.size})
+                                        </button>
+                                        <button
+                                            onClick={() => deleteZones(Array.from(selectedZones))}
+                                            disabled={deletingZones}
+                                            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-black text-[11px] transition-all disabled:opacity-50"
+                                        >
+                                            {deletingZones ? <span className="inline-flex items-center gap-2"><Spinner size={11} /> Deleting…</span> : `🗑 Delete Selected (${selectedZones.size})`}
+                                        </button>
+                                    </>
+                                )}
                                 <button
                                     onClick={() => setManagerPage(p => Math.max(1, p - 1))}
                                     disabled={managerPage <= 1}
@@ -765,8 +904,15 @@ const DynuDomains: React.FC = () => {
                                 const records = zoneRecords[zone.id] || [];
                                 const loading = !!recordsLoading[zone.id];
                                 return (
-                                    <div key={zone.id} className="rounded-xl bg-white/3 border border-white/5 overflow-hidden">
+                                    <div key={zone.id} className={`rounded-xl bg-white/3 border overflow-hidden ${selectedZones.has(zone.id) ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-white/5'}`}>
                                         <div className="flex items-center gap-3 px-4 py-3">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedZones.has(zone.id)}
+                                                onChange={() => toggleZoneSelected(zone.id)}
+                                                className="accent-indigo-500 shrink-0"
+                                                title="Select for deletion"
+                                            />
                                             <button
                                                 onClick={() => toggleZone(zone.id)}
                                                 className="flex items-center gap-2 text-left flex-1 min-w-0"
@@ -785,6 +931,14 @@ const DynuDomains: React.FC = () => {
                                                     ⟳
                                                 </button>
                                             )}
+                                            <button
+                                                onClick={() => deleteZones([zone.id])}
+                                                disabled={deletingZones}
+                                                className="px-2 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 font-black text-[10px] transition-all disabled:opacity-50 shrink-0"
+                                                title="Delete this domain"
+                                            >
+                                                {deletingZones ? <Spinner size={10} /> : '✕'}
+                                            </button>
                                         </div>
 
                                         {open && (
