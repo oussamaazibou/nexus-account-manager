@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 const API_URL = '/api';
+const PAGE_SIZE = 25;
 
 interface JobAccount {
     email: string;
@@ -29,6 +30,40 @@ interface DynuStore {
     provisioned: DynuProvisioned[];
 }
 
+interface BulkResult {
+    email: string;
+    success?: boolean;
+    subdomain?: string;
+    verified?: boolean;
+    provider?: string | null;
+    error?: string;
+    status?: string;
+}
+
+interface DynuZone {
+    id: number;
+    name: string;
+    [k: string]: any;
+}
+
+interface DynuDnsRecord {
+    id: number;
+    recordType: string;
+    nodeName?: string;
+    hostname?: string;
+    content?: string;
+    textData?: string;
+    ipv4Address?: string;
+    ipv6Address?: string;
+    host?: string;
+    priority?: number;
+    port?: number;
+    weight?: number;
+    ttl?: number;
+    state?: boolean;
+    [k: string]: any;
+}
+
 const toast = (msg: string, type: 'ok' | 'err' | 'info' = 'info') => {
     const c = document.getElementById('toast-container'); if (!c) return;
     const el = document.createElement('div');
@@ -44,6 +79,15 @@ const Spinner = ({ size = 14 }: { size?: number }) => (
     </svg>
 );
 
+const recordValue = (r: DynuDnsRecord): string => {
+    const v = r.ipv4Address || r.ipv6Address || r.host || r.textData || r.content || '';
+    const extra = [];
+    if (r.priority != null && (r.recordType === 'MX' || r.recordType === 'SRV')) extra.push(`prio ${r.priority}`);
+    if (r.port != null && r.recordType === 'SRV') extra.push(`port ${r.port}`);
+    if (r.weight != null && r.recordType === 'SRV') extra.push(`weight ${r.weight}`);
+    return extra.length ? `${v}  (${extra.join(', ')})` : v;
+};
+
 const DynuDomains: React.FC = () => {
     const [accounts, setAccounts] = useState<JobAccount[]>([]);
     const [selectedEmail, setSelectedEmail] = useState('');
@@ -55,9 +99,31 @@ const DynuDomains: React.FC = () => {
     const [removingBase, setRemovingBase] = useState<string | null>(null);
     const [provisioning, setProvisioning] = useState<string | null>(null);
     const [verifying, setVerifying] = useState<string | null>(null);
+
+    // Bulk provision
+    const [bulkText, setBulkText] = useState('');
+    const [bulkBaseDomain, setBulkBaseDomain] = useState('');
+    const [bulking, setBulking] = useState(false);
+    const [bulkResults, setBulkResults] = useState<BulkResult[]>([]);
+
+    // Activity log
     const [logs, setLogs] = useState<DynuLog[]>([]);
     const [logsOpen, setLogsOpen] = useState(true);
-    const logsEndRef = useRef<HTMLDivElement>(null);
+    const logScrollRef = useRef<HTMLDivElement>(null);
+
+    // Domain manager
+    const [managerDomains, setManagerDomains] = useState<DynuZone[]>([]);
+    const [managerLoading, setManagerLoading] = useState(false);
+    const [managerError, setManagerError] = useState('');
+    const [managerPage, setManagerPage] = useState(1);
+    const [openZones, setOpenZones] = useState<Set<number>>(new Set());
+    const [zoneRecords, setZoneRecords] = useState<Record<number, DynuDnsRecord[]>>({});
+    const [recordsLoading, setRecordsLoading] = useState<Record<number, boolean>>({});
+    const [deletingRecord, setDeletingRecord] = useState<string | null>(null);
+    const [addForm, setAddForm] = useState<{ zoneId: number | null; type: string; nodeName: string; value: string; priority: string; port: string; weight: string }>({
+        zoneId: null, type: 'A', nodeName: '', value: '', priority: '1', port: '0', weight: '0'
+    });
+    const [addingRecord, setAddingRecord] = useState(false);
 
     const loadLogs = useCallback(async () => {
         try {
@@ -73,8 +139,12 @@ const DynuDomains: React.FC = () => {
         return () => clearInterval(iv);
     }, [loadLogs]);
 
+    // Auto-scroll the log panel ONLY when already near its bottom — never the page.
     useEffect(() => {
-        logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        const el = logScrollRef.current;
+        if (!el) return;
+        const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+        if (nearBottom) el.scrollTop = el.scrollHeight;
     }, [logs, logsOpen]);
 
     const loadStore = useCallback(async () => {
@@ -110,6 +180,10 @@ const DynuDomains: React.FC = () => {
     useEffect(() => {
         setSearchText(selectedEmail);
     }, [selectedEmail]);
+
+    useEffect(() => {
+        if (!bulkBaseDomain && store.baseDomains.length) setBulkBaseDomain(store.baseDomains[0]);
+    }, [store.baseDomains, bulkBaseDomain]);
 
     const filteredAccounts = accounts.filter(a =>
         a.email.toLowerCase().includes(searchText.trim().toLowerCase())
@@ -154,6 +228,7 @@ const DynuDomains: React.FC = () => {
                     baseDomains: prev.baseDomains.filter(d => d !== baseDomain),
                     provisioned: prev.provisioned.filter(p => p.baseDomain !== baseDomain)
                 }));
+                if (bulkBaseDomain === baseDomain) setBulkBaseDomain(store.baseDomains[0] || '');
                 toast(`Removed ${baseDomain}`, 'ok');
             } else {
                 toast(`Error: ${data.error}`, 'err');
@@ -188,6 +263,34 @@ const DynuDomains: React.FC = () => {
         }
     };
 
+    const runBulkProvision = async () => {
+        const emails = bulkText.split('\n').map(l => l.trim().toLowerCase()).filter(e => e.includes('@'));
+        if (!emails.length) return toast('Paste at least one account email (one per line)', 'err');
+        if (!bulkBaseDomain) return toast('Select a base domain first', 'err');
+        setBulking(true);
+        setBulkResults(emails.map(e => ({ email: e, success: false, status: 'queued' })));
+        try {
+            const res = await fetch(`${API_URL}/dynu/provision/bulk`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ adminEmails: emails, baseDomain: bulkBaseDomain })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setBulkResults(data.results.map((r: any) => ({ ...r, status: r.success ? 'done' : 'failed' })));
+                const ok = data.results.filter((r: any) => r.success).length;
+                toast(`Bulk done: ${ok}/${data.results.length} ok`, ok === data.results.length ? 'ok' : 'info');
+                await loadStore();
+            } else {
+                toast(`Error: ${data.error}`, 'err');
+            }
+        } catch (e: any) {
+            toast(`Error: ${e.message}`, 'err');
+        } finally {
+            setBulking(false);
+        }
+    };
+
     const reverify = async (rec: DynuProvisioned) => {
         setVerifying(rec.subdomain);
         try {
@@ -210,9 +313,132 @@ const DynuDomains: React.FC = () => {
         }
     };
 
+    // ── Dynu Domain Manager ───────────────────────────────────────────────
+    const loadManagerDomains = async () => {
+        setManagerLoading(true);
+        setManagerError('');
+        try {
+            const res = await fetch(`${API_URL}/dynu/manage/domains`);
+            const data = await res.json();
+            if (data.success) {
+                setManagerDomains(data.domains || []);
+                setManagerPage(1);
+                setOpenZones(new Set());
+                setZoneRecords({});
+                toast(`Loaded ${(data.domains || []).length} Dynu domain(s)`, 'ok');
+            } else {
+                setManagerError(data.error || 'Failed to load domains');
+            }
+        } catch (e: any) {
+            setManagerError(e.message);
+        } finally {
+            setManagerLoading(false);
+        }
+    };
+
+    const toggleZone = async (zoneId: number) => {
+        const next = new Set(openZones);
+        if (next.has(zoneId)) {
+            next.delete(zoneId);
+        } else {
+            next.add(zoneId);
+            if (!zoneRecords[zoneId]) {
+                setRecordsLoading(prev => ({ ...prev, [zoneId]: true }));
+                try {
+                    const res = await fetch(`${API_URL}/dynu/manage/records?zoneId=${zoneId}`);
+                    const data = await res.json();
+                    if (data.success) setZoneRecords(prev => ({ ...prev, [zoneId]: data.records || [] }));
+                    else toast(`Error: ${data.error}`, 'err');
+                } catch (e: any) {
+                    toast(`Error: ${e.message}`, 'err');
+                } finally {
+                    setRecordsLoading(prev => { const n = { ...prev }; delete n[zoneId]; return n; });
+                }
+            }
+        }
+        setOpenZones(next);
+    };
+
+    const refreshZoneRecords = async (zoneId: number) => {
+        setRecordsLoading(prev => ({ ...prev, [zoneId]: true }));
+        try {
+            const res = await fetch(`${API_URL}/dynu/manage/records?zoneId=${zoneId}`);
+            const data = await res.json();
+            if (data.success) setZoneRecords(prev => ({ ...prev, [zoneId]: data.records || [] }));
+            else toast(`Error: ${data.error}`, 'err');
+        } catch (e: any) {
+            toast(`Error: ${e.message}`, 'err');
+        } finally {
+            setRecordsLoading(prev => { const n = { ...prev }; delete n[zoneId]; return n; });
+        }
+    };
+
+    const deleteRecord = async (zoneId: number, recId: number) => {
+        setDeletingRecord(`${zoneId}:${recId}`);
+        try {
+            const res = await fetch(`${API_URL}/dynu/manage/records`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ zoneId, recordId: recId })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setZoneRecords(prev => ({ ...prev, [zoneId]: (prev[zoneId] || []).filter(r => r.id !== recId) }));
+                toast('Record deleted', 'ok');
+            } else {
+                toast(`Error: ${data.error}`, 'err');
+            }
+        } catch (e: any) {
+            toast(`Error: ${e.message}`, 'err');
+        } finally {
+            setDeletingRecord(null);
+        }
+    };
+
+    const buildRecordPayload = () => {
+        const body: Record<string, any> = {};
+        switch (addForm.type) {
+            case 'A': body.ipv4Address = addForm.value.trim(); break;
+            case 'AAAA': body.ipv6Address = addForm.value.trim(); break;
+            case 'CNAME': case 'NS': body.host = addForm.value.trim(); break;
+            case 'TXT': body.textData = addForm.value; break;
+            case 'MX': body.host = addForm.value.trim(); body.priority = Number(addForm.priority); break;
+            case 'SRV': body.host = addForm.value.trim(); body.priority = Number(addForm.priority); body.weight = Number(addForm.weight); body.port = Number(addForm.port); break;
+        }
+        return { nodeName: addForm.nodeName.trim(), recordType: addForm.type, ttl: 300, state: true, group: '', body };
+    };
+
+    const submitAddRecord = async (zoneId: number) => {
+        if (!addForm.value.trim()) return toast('Enter a value for the record', 'err');
+        setAddingRecord(true);
+        try {
+            const res = await fetch(`${API_URL}/dynu/manage/records`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ zoneId, record: buildRecordPayload() })
+            });
+            const data = await res.json();
+            if (data.success) {
+                toast(`Added ${addForm.type} record`, 'ok');
+                setAddForm(f => ({ ...f, nodeName: '', value: '' }));
+                await refreshZoneRecords(zoneId);
+            } else {
+                toast(`Error: ${data.error}`, 'err');
+            }
+        } catch (e: any) {
+            toast(`Error: ${e.message}`, 'err');
+        } finally {
+            setAddingRecord(false);
+        }
+    };
+
+    const totalPages = Math.max(1, Math.ceil(managerDomains.length / PAGE_SIZE));
+    const pageDomains = managerDomains.slice((managerPage - 1) * PAGE_SIZE, managerPage * PAGE_SIZE);
+
     const baseCount = store.baseDomains.length;
     const provisionedCount = store.provisioned.length;
     const verifiedCount = store.provisioned.filter(p => p.verified).length;
+    const bulkOk = bulkResults.filter(r => r.success).length;
 
     return (
         <div className="space-y-8 animate-in fade-in duration-700 pb-24">
@@ -247,7 +473,7 @@ const DynuDomains: React.FC = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-                {/* LEFT: Account + base domains */}
+                {/* LEFT: Account + base domains + bulk */}
                 <div className="lg:col-span-1 space-y-4">
                     <div className="glass-card p-5 space-y-4">
                         <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Target Workspace</h3>
@@ -288,6 +514,51 @@ const DynuDomains: React.FC = () => {
                                 ? 'No verified accounts found — run List Accounts to populate result_accounts.txt.'
                                 : `${accounts.length} verified account(s) from Result Accounts. Selected: ${selectedEmail || '—'}`}
                         </p>
+                    </div>
+
+                    <div className="glass-card p-5 space-y-4">
+                        <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Bulk Provision</h3>
+                        <textarea
+                            rows={5}
+                            placeholder={'admin@workspace1.com\nadmin@workspace2.com\nadmin@workspace3.com\none-per-line'}
+                            value={bulkText}
+                            onChange={e => setBulkText(e.target.value)}
+                            style={{ resize: 'vertical' }}
+                            className="w-full px-4 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                        />
+                        <select
+                            value={bulkBaseDomain}
+                            onChange={e => setBulkBaseDomain(e.target.value)}
+                            className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] font-mono"
+                        >
+                            {store.baseDomains.length === 0 && <option value="">No base domains — add one below</option>}
+                            {store.baseDomains.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                        <button
+                            onClick={runBulkProvision}
+                            disabled={bulking || !bulkText.trim() || !bulkBaseDomain}
+                            className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-sm transition-all disabled:opacity-50"
+                        >
+                            {bulking ? <span className="inline-flex items-center gap-2"><Spinner size={13} /> Processing…</span> : `⚡ Run Bulk Provision (${bulkText.split('\n').filter(l => l.includes('@')).length})`}
+                        </button>
+                        <p className="text-[10px] text-[var(--text-muted)]">Each pasted account gets its own unique subdomain under the selected base domain. Live progress shows in the Activity Log below.</p>
+
+                        {bulkResults.length > 0 && (
+                            <div className="space-y-1.5 rounded-xl bg-black/30 border border-white/5 p-3 max-h-56 overflow-y-auto">
+                                <div className="flex items-center justify-between text-[10px] uppercase tracking-widest font-black text-[var(--text-muted)]">
+                                    <span>Bulk Results</span>
+                                    <span className={bulkOk === bulkResults.length ? 'text-emerald-400' : 'text-amber-400'}>{bulkOk}/{bulkResults.length} ok</span>
+                                </div>
+                                {bulkResults.map(r => (
+                                    <div key={r.email} className="flex items-center gap-2 text-[11px] font-mono">
+                                        <span className={`shrink-0 ${r.success ? 'text-emerald-400' : 'text-rose-400'}`}>{r.success ? '✓' : '✕'}</span>
+                                        <span className="flex-1 truncate text-[var(--text-muted)]">{r.email}</span>
+                                        {r.subdomain && <span className="truncate text-cyan-400">{r.subdomain}</span>}
+                                        {r.error && <span className="truncate text-rose-400">{r.error}</span>}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                     <div className="glass-card p-5 space-y-4">
@@ -402,7 +673,7 @@ const DynuDomains: React.FC = () => {
                         <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Dynu Activity Log</h3>
                         {logs.some(l => l.level === 'ERROR') && (
                             <span className="text-[10px] px-2 py-0.5 rounded font-black uppercase bg-rose-500/15 text-rose-400">
-                                {logs.filter(l => l.level === 'ERROR').length} error{logs.some(l => l.level === 'ERROR') && logs.filter(l => l.level === 'ERROR').length > 1 ? 's' : ''}
+                                {logs.filter(l => l.level === 'ERROR').length} error{logs.filter(l => l.level === 'ERROR').length > 1 ? 's' : ''}
                             </span>
                         )}
                         {logs.some(l => l.level === 'WARN') && !logs.some(l => l.level === 'ERROR') && (
@@ -419,7 +690,7 @@ const DynuDomains: React.FC = () => {
                     </button>
                 </div>
                 {logsOpen && (
-                    <div className="h-56 overflow-y-auto rounded-xl bg-black/40 border border-white/5 p-3 font-mono text-[11px] leading-relaxed space-y-1">
+                    <div ref={logScrollRef} className="h-56 overflow-y-auto rounded-xl bg-black/40 border border-white/5 p-3 font-mono text-[11px] leading-relaxed space-y-1">
                         {logs.length === 0 && (
                             <div className="text-center py-8 text-[var(--text-muted)] text-sm font-sans">
                                 No Dynu activity yet. Provision a subdomain to see the live process.
@@ -436,8 +707,184 @@ const DynuDomains: React.FC = () => {
                                 </div>
                             );
                         })}
-                        <div ref={logsEndRef} />
                     </div>
+                )}
+            </div>
+
+            {/* ── Dynu Domain Manager ── */}
+            <div className="glass-card p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                        <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Dynu Domain Manager</h3>
+                        <span className="text-[10px] text-[var(--text-muted)]">Live DNS zones · add/delete records via API</span>
+                    </div>
+                    <button
+                        onClick={loadManagerDomains}
+                        disabled={managerLoading}
+                        className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs uppercase tracking-widest transition-all disabled:opacity-50"
+                    >
+                        {managerLoading ? <span className="inline-flex items-center gap-2"><Spinner size={12} /> Loading…</span> : `⟳ Load Domains${managerDomains.length ? ` (${managerDomains.length})` : ''}`}
+                    </button>
+                </div>
+
+                {managerError && (
+                    <div className="px-4 py-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold">
+                        {managerError}
+                    </div>
+                )}
+
+                {managerDomains.length > 0 && (
+                    <>
+                        {/* Pagination */}
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <span className="text-[11px] text-[var(--text-muted)]">
+                                Showing {(managerPage - 1) * PAGE_SIZE + 1}–{Math.min(managerPage * PAGE_SIZE, managerDomains.length)} of {managerDomains.length} domains
+                            </span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setManagerPage(p => Math.max(1, p - 1))}
+                                    disabled={managerPage <= 1}
+                                    className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] font-black text-[11px] transition-all disabled:opacity-40"
+                                >
+                                    ‹ Prev
+                                </button>
+                                <span className="text-[11px] font-mono text-[var(--text-main)]">Page {managerPage} / {totalPages}</span>
+                                <button
+                                    onClick={() => setManagerPage(p => Math.min(totalPages, p + 1))}
+                                    disabled={managerPage >= totalPages}
+                                    className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] font-black text-[11px] transition-all disabled:opacity-40"
+                                >
+                                    Next ›
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            {pageDomains.map(zone => {
+                                const open = openZones.has(zone.id);
+                                const records = zoneRecords[zone.id] || [];
+                                const loading = !!recordsLoading[zone.id];
+                                return (
+                                    <div key={zone.id} className="rounded-xl bg-white/3 border border-white/5 overflow-hidden">
+                                        <div className="flex items-center gap-3 px-4 py-3">
+                                            <button
+                                                onClick={() => toggleZone(zone.id)}
+                                                className="flex items-center gap-2 text-left flex-1 min-w-0"
+                                            >
+                                                <svg className={`transition-transform shrink-0 ${open ? 'rotate-90' : ''}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6" /></svg>
+                                                <span className="text-sm font-mono font-bold text-[var(--text-main)] truncate">{zone.name}</span>
+                                                <span className="text-[10px] px-2 py-0.5 rounded font-black uppercase bg-cyan-500/10 text-cyan-400 shrink-0">#{zone.id}</span>
+                                                <span className="text-[10px] font-mono text-[var(--text-muted)] shrink-0">{loading ? '…' : open ? `${records.length} record${records.length !== 1 ? 's' : ''}` : 'records'}</span>
+                                            </button>
+                                            {open && (
+                                                <button
+                                                    onClick={() => refreshZoneRecords(zone.id)}
+                                                    disabled={loading}
+                                                    className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-muted)] font-black text-[10px] uppercase transition-all disabled:opacity-50"
+                                                >
+                                                    ⟳
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {open && (
+                                            <div className="border-t border-white/5 p-4 space-y-4">
+                                                {/* Add record form */}
+                                                <div className="rounded-xl bg-black/30 border border-white/5 p-3 space-y-3">
+                                                    <div className="text-[10px] uppercase tracking-widest font-black text-[var(--text-muted)]">＋ Add Record</div>
+                                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                                        <select
+                                                            value={addForm.zoneId === zone.id ? addForm.type : 'A'}
+                                                            onChange={e => setAddForm(f => ({ ...f, zoneId: zone.id, type: e.target.value, value: '' }))}
+                                                            className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-[var(--text-main)] font-mono"
+                                                        >
+                                                            {['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SRV'].map(t => <option key={t} value={t}>{t}</option>)}
+                                                        </select>
+                                                        <input
+                                                            placeholder="node (blank = @/root)"
+                                                            value={addForm.zoneId === zone.id ? addForm.nodeName : ''}
+                                                            onChange={e => setAddForm(f => ({ ...f, zoneId: zone.id, nodeName: e.target.value }))}
+                                                            className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                                                        />
+                                                        <input
+                                                            placeholder={(addForm.zoneId === zone.id ? addForm.type : 'A') === 'MX' || (addForm.zoneId === zone.id ? addForm.type : 'A') === 'SRV' ? 'host / target' : 'value'}
+                                                            value={addForm.zoneId === zone.id ? addForm.value : ''}
+                                                            onChange={e => setAddForm(f => ({ ...f, zoneId: zone.id, value: e.target.value }))}
+                                                            className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                                                        />
+                                                        {(addForm.zoneId === zone.id ? addForm.type : 'A') === 'MX' && (
+                                                            <input
+                                                                placeholder="priority"
+                                                                value={addForm.zoneId === zone.id ? addForm.priority : '1'}
+                                                                onChange={e => setAddForm(f => ({ ...f, zoneId: zone.id, priority: e.target.value }))}
+                                                                className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                                                            />
+                                                        )}
+                                                        {(addForm.zoneId === zone.id ? addForm.type : 'A') === 'SRV' && (
+                                                            <>
+                                                                <input
+                                                                    placeholder="priority"
+                                                                    value={addForm.zoneId === zone.id ? addForm.priority : '1'}
+                                                                    onChange={e => setAddForm(f => ({ ...f, zoneId: zone.id, priority: e.target.value }))}
+                                                                    className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                                                                />
+                                                                <input
+                                                                    placeholder="weight"
+                                                                    value={addForm.zoneId === zone.id ? addForm.weight : '0'}
+                                                                    onChange={e => setAddForm(f => ({ ...f, zoneId: zone.id, weight: e.target.value }))}
+                                                                    className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                                                                />
+                                                                <input
+                                                                    placeholder="port"
+                                                                    value={addForm.zoneId === zone.id ? addForm.port : '0'}
+                                                                    onChange={e => setAddForm(f => ({ ...f, zoneId: zone.id, port: e.target.value }))}
+                                                                    className="px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                                                                />
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                    <button
+                                                        onClick={() => submitAddRecord(zone.id)}
+                                                        disabled={addingRecord}
+                                                        className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs transition-all disabled:opacity-50"
+                                                    >
+                                                        {addingRecord ? <span className="inline-flex items-center gap-2"><Spinner size={12} /> Adding…</span> : '＋ Add Record'}
+                                                    </button>
+                                                </div>
+
+                                                {/* Records table */}
+                                                {loading ? (
+                                                    <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+                                                        <Spinner size={12} /> Loading records…
+                                                    </div>
+                                                ) : records.length === 0 ? (
+                                                    <div className="text-[11px] text-[var(--text-muted)]">No records found in this zone.</div>
+                                                ) : (
+                                                    <div className="space-y-1">
+                                                        {records.map(r => (
+                                                            <div key={r.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/3 border border-white/5">
+                                                                <span className="text-[10px] px-2 py-0.5 rounded font-black uppercase bg-white/10 text-[var(--text-main)] shrink-0">{r.recordType}</span>
+                                                                <span className="text-[11px] font-mono text-[var(--text-muted)] truncate">{r.hostname || r.nodeName || '@'}</span>
+                                                                <span className="flex-1 text-[11px] font-mono text-[var(--text-main)] truncate" title={recordValue(r)}>{recordValue(r)}</span>
+                                                                <span className="text-[10px] font-mono text-[var(--text-muted)] shrink-0">{r.ttl != null ? `${r.ttl}s` : ''}</span>
+                                                                <button
+                                                                    onClick={() => deleteRecord(zone.id, r.id)}
+                                                                    disabled={deletingRecord === `${zone.id}:${r.id}`}
+                                                                    className="px-2 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 font-black text-[10px] transition-all disabled:opacity-50 shrink-0"
+                                                                >
+                                                                    {deletingRecord === `${zone.id}:${r.id}` ? <Spinner size={10} /> : '✕ Delete'}
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </>
                 )}
             </div>
         </div>

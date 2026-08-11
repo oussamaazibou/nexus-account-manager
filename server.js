@@ -2889,8 +2889,160 @@ app.delete('/api/dynu/domains', (req, res) => {
     }
 });
 
-// Generate a unique subdomain for a base domain, add it to the workspace as a
-// domain alias, and auto-verify it through the detected DNS provider.
+// Construct a Dynu API client from the saved config, or null when no key set.
+async function getDynuService() {
+    const configPath = path.join(__dirname, 'config.json');
+    const config = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
+    const dynuKey = (config.dynuApiKey || '').trim();
+    if (!dynuKey) return null;
+    const { default: DynuService } = await import('./services/dynuService.js');
+    return new DynuService(dynuKey);
+}
+
+// Provision a unique subdomain under `cleanBase` for `adminEmail` and return
+// the outcome. Shared by the single and bulk provision endpoints.
+async function provisionSubdomain(adminEmail, cleanBase) {
+    const configPath = path.join(__dirname, 'config.json');
+    let config = {};
+    if (fs.existsSync(configPath)) config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+    dynuLog('INFO', `▶️ Provision start | admin=${adminEmail} | base=${cleanBase}`);
+
+    const dynuKey = (config.dynuApiKey || '').trim();
+    if (!dynuKey) {
+        dynuLog('ERROR', `❌ Dynu API key is EMPTY — set 'dynuApiKey' in Settings before provisioning (all Dynu API calls will be rejected)`);
+    } else {
+        dynuLog('INFO', `🔑 Dynu API key configured (${dynuKey.length} chars)`);
+    }
+
+    const { google } = await import('googleapis');
+    const keyData = await getKeyData(adminEmail);
+
+    // 1) Generate a unique subdomain under the base domain
+    const prefix = Math.random().toString(36).slice(2, 8).toLowerCase();
+    const subdomain = `${prefix}.${cleanBase}`;
+    dynuLog('INFO', `📍 Generated subdomain: ${subdomain}`);
+
+    // 2) Add the subdomain to the Workspace account as a domain alias
+    const auth = new google.auth.JWT({
+        email: keyData.client_email,
+        key: keyData.private_key,
+        scopes: ['https://www.googleapis.com/auth/admin.directory.domain'],
+        subject: adminEmail
+    });
+    const admin = google.admin({ version: 'directory_v1', auth });
+    await admin.domains.insert({ customer: 'my_customer', requestBody: { domainName: subdomain } });
+    dynuLog('INFO', `✅ Subdomain added to Workspace: ${subdomain} (${adminEmail})`);
+
+    // 3) Fetch the exact verification token Google expects
+    const siteVerification = google.siteVerification({
+        version: 'v1',
+        auth: new google.auth.JWT({
+            email: keyData.client_email,
+            key: keyData.private_key,
+            scopes: ['https://www.googleapis.com/auth/siteverification'],
+            subject: adminEmail
+        })
+    });
+    const tokenRes = await siteVerification.webResource.getToken({
+        requestBody: { verificationMethod: 'DNS_TXT', site: { identifier: subdomain, type: 'INET_DOMAIN' } }
+    });
+    const txtToken = tokenRes.data.token;
+    dynuLog('INFO', `📝 Verification token received for ${subdomain}`);
+
+    // 4) Auto-detect the DNS provider (Cloudflare first, then Dynu) & upsert TXT
+    const { detectDnsProvider, upsertDnsTxt } = await import('./services/dnsProvider.js');
+    dynuLog('INFO', `🔎 Detecting DNS provider for ${subdomain}...`);
+    const det = await detectDnsProvider(subdomain, config);
+    let provider = det.provider;
+    let verified = false;
+    let dynuHost = null;
+
+    if (det.provider) {
+        dynuLog('INFO', `🌐 Provider detected: ${det.provider}${det.zoneName ? ` (zone: ${det.zoneName})` : ''}${det.freeDomain ? ' (Dynu free domain)' : ''}`);
+    } else {
+        dynuLog('INFO', `🌐 No zone match yet for ${subdomain} — checking Dynu dynamic-DNS ownership`);
+    }
+
+    // 4a) For Dynu — or when no provider matched and a Dynu key exists —
+    //     create the Dynamic DNS host for the generated subdomain (API
+    //     equivalent of "Add Dynamic DNS" in the dashboard). Dynu free
+    //     domains (dynu.net, dynuddns.net, ...) have no apex zone in the
+    //     account, so the host must exist before TXT records can be placed.
+    const needDynuHost = det.provider === 'dynu' || (!det.provider && !!(config.dynuApiKey || '').trim());
+    if (needDynuHost) {
+        const dynuService = det.dynu?.service || (await getDynuService());
+        if (dynuService) {
+            // Apex A-record IP: explicit override from config, else the
+            // server's current public IP.
+            const apexIp = (config.dynuApexIp || '').trim() || await dynuService.getPublicIp();
+            dynuLog('INFO', `🏠 Creating Dynamic DNS host ${subdomain} in Dynu (POST /v2/dns)...${apexIp ? ` | A record -> ${apexIp}` : ' | no IP available for A record'}`);
+            const hostRes = await dynuService.ensureHost(subdomain, apexIp);
+            if (hostRes.success) {
+                provider = 'dynu';
+                dynuHost = { created: true, already: !!hostRes.already, zoneId: hostRes.zoneId || null };
+                if (hostRes.aRecord) {
+                    if (hostRes.aRecord.error) {
+                        dynuLog('WARN', `⚠️ Could not set A record for ${subdomain}: ${hostRes.aRecord.error}`);
+                    } else {
+                        dynuLog('INFO', `✅ A record -> ${hostRes.aRecord.ip} for ${subdomain}${hostRes.aRecord.already ? ' (already)' : ''}`);
+                    }
+                }
+                dynuLog('INFO', `✅ Dynamic DNS host ready: ${subdomain}${hostRes.already ? ' (already existed)' : ''}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
+            } else {
+                dynuLog('ERROR', `❌ Could not create Dynamic DNS host for ${subdomain}: ${hostRes.error}`);
+            }
+        }
+    }
+
+    if (provider) {
+        dynuLog('INFO', `✏️ Upserting TXT record for ${subdomain}...`);
+        const dnsRes = await upsertDnsTxt(subdomain, txtToken, config, (m) => dynuLog('INFO', m));
+        if (dnsRes.success) {
+            dynuLog('INFO', `✅ TXT record ${dnsRes.already ? 'already present' : 'added'} for ${subdomain}`);
+            if (!dnsRes.already) await new Promise(r => setTimeout(r, 10000));
+            // 5) Trigger Google Site Verification with retries
+            for (let i = 0; i < 4; i++) {
+                try {
+                    if (i > 0) await new Promise(r => setTimeout(r, 15000));
+                    await siteVerification.webResource.insert({
+                        verificationMethod: 'DNS_TXT',
+                        requestBody: { site: { identifier: subdomain, type: 'INET_DOMAIN' } }
+                    });
+                    verified = true;
+                    dynuLog('INFO', `✅ Google verification succeeded for ${subdomain} (attempt ${i + 1})`);
+                    break;
+                } catch (e) {
+                    const errMsg = e.response?.data?.error?.message || e.message;
+                    dynuLog('WARN', `⚠️ webResource.insert attempt ${i + 1} failed: ${errMsg}`);
+                }
+            }
+        } else {
+            dynuLog('ERROR', `❌ TXT upsert failed: ${dnsRes.error}`);
+        }
+    } else {
+        dynuLog('WARN', `⚠️ Subdomain ${subdomain} added but NOT verified — no DNS zone found`);
+    }
+
+    // 6) Persist to the store
+    const store = readDynuDomainsStore();
+    if (!store.baseDomains.includes(cleanBase)) store.baseDomains.push(cleanBase);
+    store.provisioned.push({
+        baseDomain: cleanBase,
+        subdomain,
+        adminEmail,
+        provider,
+        verified,
+        dynuHost,
+        createdAt: new Date().toISOString()
+    });
+    writeDynuDomainsStore(store);
+
+    dynuLog(verified ? 'INFO' : 'WARN', `🏁 Provision finished for ${subdomain} | provider=${provider || 'none'} | verified=${verified} | dynuHost=${dynuHost ? (dynuHost.already ? 'existing' : 'created') : 'not-created'}`);
+    return { success: true, subdomain, provider, verified, dynuHost };
+}
+
+// Provision a single workspace account.
 app.post('/api/dynu/provision', async (req, res) => {
     try {
         const { adminEmail, baseDomain } = req.body;
@@ -2899,148 +3051,106 @@ app.post('/api/dynu/provision', async (req, res) => {
         const cleanBase = String(baseDomain).trim().toLowerCase();
         if (!cleanBase.includes('.')) return res.status(400).json({ error: 'Invalid base domain' });
 
-        dynuLog('INFO', `▶️ Provision start | admin=${adminEmail} | base=${cleanBase}`);
-
-        const configPath = path.join(__dirname, 'config.json');
-        let config = {};
-        if (fs.existsSync(configPath)) config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-
-        const dynuKey = (config.dynuApiKey || '').trim();
-        if (!dynuKey) {
-            dynuLog('ERROR', `❌ Dynu API key is EMPTY — set 'dynuApiKey' in Settings before provisioning (all Dynu API calls will be rejected)`);
-        } else {
-            dynuLog('INFO', `🔑 Dynu API key configured (${dynuKey.length} chars)`);
-        }
-
-        const { google } = await import('googleapis');
-        const keyData = await getKeyData(adminEmail);
-
-        // 1) Generate a unique subdomain under the base domain
-        const prefix = Math.random().toString(36).slice(2, 8).toLowerCase();
-        const subdomain = `${prefix}.${cleanBase}`;
-        dynuLog('INFO', `📍 Generated subdomain: ${subdomain}`);
-
-        // 2) Add the subdomain to the Workspace account as a domain alias
-        const auth = new google.auth.JWT({
-            email: keyData.client_email,
-            key: keyData.private_key,
-            scopes: ['https://www.googleapis.com/auth/admin.directory.domain'],
-            subject: adminEmail
-        });
-        const admin = google.admin({ version: 'directory_v1', auth });
-        await admin.domains.insert({ customer: 'my_customer', requestBody: { domainName: subdomain } });
-        dynuLog('INFO', `✅ Subdomain added to Workspace: ${subdomain} (${adminEmail})`);
-
-        // 3) Fetch the exact verification token Google expects
-        const siteVerification = google.siteVerification({
-            version: 'v1',
-            auth: new google.auth.JWT({
-                email: keyData.client_email,
-                key: keyData.private_key,
-                scopes: ['https://www.googleapis.com/auth/siteverification'],
-                subject: adminEmail
-            })
-        });
-        const tokenRes = await siteVerification.webResource.getToken({
-            requestBody: { verificationMethod: 'DNS_TXT', site: { identifier: subdomain, type: 'INET_DOMAIN' } }
-        });
-        const txtToken = tokenRes.data.token;
-        dynuLog('INFO', `📝 Verification token received for ${subdomain}`);
-
-        // 4) Auto-detect the DNS provider (Cloudflare first, then Dynu) & upsert TXT
-        const { detectDnsProvider, upsertDnsTxt } = await import('./services/dnsProvider.js');
-        dynuLog('INFO', `🔎 Detecting DNS provider for ${subdomain}...`);
-        const det = await detectDnsProvider(subdomain, config);
-        let provider = det.provider;
-        let verified = false;
-        let dynuHost = null;
-
-        if (det.provider) {
-            dynuLog('INFO', `🌐 Provider detected: ${det.provider}${det.zoneName ? ` (zone: ${det.zoneName})` : ''}${det.freeDomain ? ' (Dynu free domain)' : ''}`);
-        } else {
-            dynuLog('INFO', `🌐 No zone match yet for ${subdomain} — checking Dynu dynamic-DNS ownership`);
-        }
-
-        // 4a) For Dynu — or when no provider matched and a Dynu key exists —
-        //     create the Dynamic DNS host for the generated subdomain (API
-        //     equivalent of "Add Dynamic DNS" in the dashboard). Dynu free
-        //     domains (dynu.net, dynuddns.net, ...) have no apex zone in the
-        //     account, so the host must exist before TXT records can be placed.
-        const needDynuHost = det.provider === 'dynu' || (!det.provider && !!(config.dynuApiKey || '').trim());
-        if (needDynuHost) {
-            const dynuService = det.dynu?.service || (await import('./services/dynuService.js')).default;
-            if (dynuService) {
-                // Apex A-record IP: explicit override from config, else the
-                // server's current public IP.
-                const apexIp = (config.dynuApexIp || '').trim() || await dynuService.getPublicIp();
-                dynuLog('INFO', `🏠 Creating Dynamic DNS host ${subdomain} in Dynu (POST /v2/dns)...${apexIp ? ` | A record -> ${apexIp}` : ' | no IP available for A record'}`);
-                const hostRes = await dynuService.ensureHost(subdomain, apexIp);
-                if (hostRes.success) {
-                    provider = 'dynu';
-                    dynuHost = { created: true, already: !!hostRes.already, zoneId: hostRes.zoneId || null };
-                    if (hostRes.aRecord) {
-                        if (hostRes.aRecord.error) {
-                            dynuLog('WARN', `⚠️ Could not set A record for ${subdomain}: ${hostRes.aRecord.error}`);
-                        } else {
-                            dynuLog('INFO', `✅ A record -> ${hostRes.aRecord.ip} for ${subdomain}${hostRes.aRecord.already ? ' (already)' : ''}`);
-                        }
-                    }
-                    dynuLog('INFO', `✅ Dynamic DNS host ready: ${subdomain}${hostRes.already ? ' (already existed)' : ''}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
-                } else {
-                    dynuLog('ERROR', `❌ Could not create Dynamic DNS host for ${subdomain}: ${hostRes.error}`);
-                }
-            }
-        }
-
-        if (provider) {
-            dynuLog('INFO', `✏️ Upserting TXT record for ${subdomain}...`);
-            const dnsRes = await upsertDnsTxt(subdomain, txtToken, config, (m) => dynuLog('INFO', m));
-            if (dnsRes.success) {
-                dynuLog('INFO', `✅ TXT record ${dnsRes.already ? 'already present' : 'added'} for ${subdomain}`);
-                if (!dnsRes.already) await new Promise(r => setTimeout(r, 10000));
-                // 5) Trigger Google Site Verification with retries
-                for (let i = 0; i < 4; i++) {
-                    try {
-                        if (i > 0) await new Promise(r => setTimeout(r, 15000));
-                        await siteVerification.webResource.insert({
-                            verificationMethod: 'DNS_TXT',
-                            requestBody: { site: { identifier: subdomain, type: 'INET_DOMAIN' } }
-                        });
-                        verified = true;
-                        dynuLog('INFO', `✅ Google verification succeeded for ${subdomain} (attempt ${i + 1})`);
-                        break;
-                    } catch (e) {
-                        const errMsg = e.response?.data?.error?.message || e.message;
-                        dynuLog('WARN', `⚠️ webResource.insert attempt ${i + 1} failed: ${errMsg}`);
-                    }
-                }
-            } else {
-                dynuLog('ERROR', `❌ TXT upsert failed: ${dnsRes.error}`);
-            }
-        } else {
-            dynuLog('WARN', `⚠️ Subdomain ${subdomain} added but NOT verified — no DNS zone found`);
-        }
-
-        // 6) Persist to the store
-        const store = readDynuDomainsStore();
-        if (!store.baseDomains.includes(cleanBase)) store.baseDomains.push(cleanBase);
-        store.provisioned.push({
-            baseDomain: cleanBase,
-            subdomain,
-            adminEmail,
-            provider,
-            verified,
-            dynuHost,
-            createdAt: new Date().toISOString()
-        });
-        writeDynuDomainsStore(store);
-
-        dynuLog(verified ? 'INFO' : 'WARN', `🏁 Provision finished for ${subdomain} | provider=${provider || 'none'} | verified=${verified} | dynuHost=${dynuHost ? (dynuHost.already ? 'existing' : 'created') : 'not-created'}`);
-        res.json({ success: true, subdomain, provider, verified, dynuHost });
+        const result = await provisionSubdomain(adminEmail, cleanBase);
+        return res.json(result);
     } catch (e) {
         const errMsg = e.response?.data?.error?.message || e.response?.data?.error || e.message;
         dynuLog('ERROR', `❌ Provision error: ${errMsg}`);
         res.status(500).json({ error: errMsg });
+    }
+});
+
+// Bulk provision: paste multiple workspace accounts; each gets its own unique
+// subdomain under the same base domain, processed sequentially.
+app.post('/api/dynu/provision/bulk', async (req, res) => {
+    try {
+        const { adminEmails, baseDomain } = req.body;
+        const emails = (Array.isArray(adminEmails) ? adminEmails : [])
+            .map(e => String(e).trim().toLowerCase())
+            .filter(e => e.includes('@'));
+        if (!emails.length || !baseDomain) return res.status(400).json({ error: 'adminEmails (non-empty) and baseDomain required' });
+
+        const cleanBase = String(baseDomain).trim().toLowerCase();
+        if (!cleanBase.includes('.')) return res.status(400).json({ error: 'Invalid base domain' });
+
+        dynuLog('INFO', `🚀 Bulk provision start | accounts=${emails.length} | base=${cleanBase}`);
+
+        const results = [];
+        for (let i = 0; i < emails.length; i++) {
+            const email = emails[i];
+            dynuLog('INFO', `🚀 Bulk ${i + 1}/${emails.length} | ${email}`);
+            try {
+                const r = await provisionSubdomain(email, cleanBase);
+                results.push({ email, ...r });
+            } catch (e) {
+                const errMsg = e.response?.data?.error?.message || e.response?.data?.error || e.message;
+                dynuLog('ERROR', `❌ Bulk provision failed for ${email}: ${errMsg}`);
+                results.push({ email, success: false, error: errMsg });
+            }
+        }
+
+        const okCount = results.filter(r => r.success).length;
+        dynuLog('INFO', `🚀 Bulk provision finished | ok=${okCount}/${results.length}`);
+        res.json({ success: true, baseDomain: cleanBase, results });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// ── DYNU DOMAIN MANAGER (live API operations) ───────────────────────────
+// List domains, list records, add records, delete records. Mirrors the
+// Cloudflare "Domains" page but for Dynu.
+// ═══════════════════════════════════════════════════════════════════════
+
+app.get('/api/dynu/manage/domains', async (req, res) => {
+    try {
+        const svc = await getDynuService();
+        if (!svc) return res.status(400).json({ success: false, error: "Dynu API key not set — configure it in Settings" });
+        const domains = await svc.listZones();
+        res.json({ success: true, domains });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.get('/api/dynu/manage/records', async (req, res) => {
+    try {
+        const { zoneId } = req.query;
+        if (!zoneId) return res.status(400).json({ success: false, error: 'zoneId required' });
+        const svc = await getDynuService();
+        if (!svc) return res.status(400).json({ success: false, error: "Dynu API key not set — configure it in Settings" });
+        const records = await svc.listAllRecords(zoneId);
+        res.json({ success: true, records });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/dynu/manage/records', async (req, res) => {
+    try {
+        const { zoneId, record } = req.body;
+        if (!zoneId || !record?.recordType) return res.status(400).json({ success: false, error: 'zoneId and record.recordType required' });
+        const svc = await getDynuService();
+        if (!svc) return res.status(400).json({ success: false, error: "Dynu API key not set — configure it in Settings" });
+        const result = await svc.addRecord(zoneId, record);
+        if (!result.success) return res.status(400).json({ success: false, error: result.error });
+        res.json({ success: true, record: result.record });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.delete('/api/dynu/manage/records', async (req, res) => {
+    try {
+        const { zoneId, recordId } = req.body;
+        if (!zoneId || !recordId) return res.status(400).json({ success: false, error: 'zoneId, recordId required' });
+        const svc = await getDynuService();
+        if (!svc) return res.status(400).json({ success: false, error: "Dynu API key not set — configure it in Settings" });
+        const ok = await svc.deleteRecord(zoneId, recordId);
+        res.json({ success: ok });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
     }
 });
 

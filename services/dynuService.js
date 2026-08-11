@@ -230,6 +230,51 @@ export default class DynuService {
         return this.listRecords(zoneId, 'TXT');
     }
 
+    /**
+     * List every DNS record in a zone (all types).
+     * Used by the Dynu domain manager UI.
+     */
+    async listAllRecords(zoneId) {
+        try {
+            const resp = await axios.get(`${this.baseUrl}/dns/${zoneId}/record`, {
+                headers: this.headers(),
+                timeout: 15000
+            });
+            return this.unwrap(resp).dnsRecords || [];
+        } catch (e) {
+            console.error('Dynu Service Error (listAllRecords):', e.message);
+            return [];
+        }
+    }
+
+    /**
+     * Add an arbitrary DNS record to a zone. `record` must contain
+     * `recordType` plus the type-specific fields (nodeName, textData,
+     * ipv4Address, ipv6Address, host, priority, port, weight, ...).
+     * Used by the Dynu domain manager UI.
+     */
+    async addRecord(zoneId, record) {
+        try {
+            const resp = await axios.post(`${this.baseUrl}/dns/${zoneId}/record`, {
+                nodeName: record.nodeName || '',
+                recordType: record.recordType,
+                ttl: record.ttl ?? 300,
+                state: record.state ?? true,
+                group: record.group || '',
+                ...record.body
+            }, { headers: this.headers(), timeout: 15000 });
+            const data = this.unwrap(resp);
+            return { success: true, record: data };
+        } catch (e) {
+            const ex = e.dynu || e.response?.data?.exception;
+            const detail = ex
+                ? `[${ex.statusCode} ${ex.type}] ${ex.message}`
+                : `HTTP ${e.response?.status || '?'} ${JSON.stringify(e.response?.data || {}) || e.message}`;
+            console.error('Dynu Service Error (addRecord):', detail);
+            return { success: false, error: detail };
+        }
+    }
+
     async listMxRecords(zoneId) {
         return this.listRecords(zoneId, 'MX');
     }
