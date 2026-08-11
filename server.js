@@ -3187,6 +3187,29 @@ function readResultPasswordMap() {
     return map;
 }
 
+// Parse manually pasted lines: `email:password` or `email:password:domain`.
+// Password may be omitted (falls back to result_accounts.txt on the server).
+function parseRawBulkAccounts(text) {
+    const out = [];
+    for (const raw of String(text || '').split('\n')) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+        const parts = line.split(':');
+        if (parts.length < 2) continue;
+        const email = parts[0].trim();
+        if (!email.includes('@')) continue;
+        let password = parts.slice(1).join(':');
+        let targetDomain = '';
+        const last = parts[parts.length - 1];
+        if (parts.length >= 3 && /^@?[\w.-]+\.[a-zA-Z]{2,}$/.test(last)) {
+            targetDomain = last.replace(/^@/, '');
+            password = parts.slice(1, -1).join(':');
+        }
+        out.push({ email, password, targetDomain });
+    }
+    return out;
+}
+
 function getBulkHeadless() {
     try {
         const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
@@ -3285,17 +3308,20 @@ async function runBulkUserJob() {
     dynuLog('INFO', `👥 Bulk user creation finished | ok=${bulkUserJob.ok} | failed=${bulkUserJob.failed} | ${bulkUserJob.done}/${bulkUserJob.total}`);
 }
 
-// Start a bulk user-creation job. Body: { accounts: [{ email, password?, targetDomain? }], concurrency?, usersPerAccount? }
+// Start a bulk user-creation job.
+// Body: { accounts: [{ email, password?, targetDomain? }], rawText?: "email:password[:domain]\n...", concurrency?, usersPerAccount?, targetDomain? }
 app.post('/api/dynu/users/bulk', async (req, res) => {
     try {
         if (bulkUserJob.running) return res.status(409).json({ error: 'A bulk user-creation job is already running' });
-        const { accounts: rawAccounts, concurrency, usersPerAccount } = req.body || {};
-        if (!Array.isArray(rawAccounts) || !rawAccounts.length) return res.status(400).json({ error: 'accounts (non-empty array) required' });
+        const { accounts: rawAccounts, rawText, concurrency, usersPerAccount } = req.body || {};
+        const source = Array.isArray(rawAccounts) ? rawAccounts : (rawText ? parseRawBulkAccounts(rawText) : []);
+        if (!source.length) return res.status(400).json({ error: 'accounts (non-empty array) or rawText required' });
 
         const passwordMap = readResultPasswordMap();
+        const bodyTarget = String(req.body?.targetDomain || '').trim();
         const accounts = [];
         const seen = new Set();
-        for (const a of rawAccounts) {
+        for (const a of source) {
             const email = String(a.email || '').trim().toLowerCase();
             if (!email.includes('@') || seen.has(email)) continue;
             seen.add(email);
@@ -3303,7 +3329,7 @@ app.post('/api/dynu/users/bulk', async (req, res) => {
             accounts.push({
                 email,
                 password,
-                targetDomain: String(a.targetDomain || '').trim(),
+                targetDomain: String(a.targetDomain || bodyTarget || '').trim(),
                 status: 'queued',
                 usersCreated: 0,
                 error: null,

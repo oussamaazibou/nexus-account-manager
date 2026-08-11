@@ -137,7 +137,7 @@ const DynuDomains: React.FC = () => {
     const [bulkResults, setBulkResults] = useState<BulkResult[]>([]);
 
     // Bulk user creation
-    const [selectedBulkAccounts, setSelectedBulkAccounts] = useState<Set<string>>(new Set());
+    const [bulkUsersText, setBulkUsersText] = useState('');
     const [usersPerAccount, setUsersPerAccount] = useState(9);
     const [bulkUsersConcurrency, setBulkUsersConcurrency] = useState(2);
     const [bulkUsersDomain, setBulkUsersDomain] = useState('');
@@ -372,29 +372,16 @@ const DynuDomains: React.FC = () => {
         return () => clearInterval(iv);
     }, [loadBulkUserStatus]);
 
-    const toggleBulkAccount = (email: string) => {
-        setSelectedBulkAccounts(prev => {
-            const next = new Set(prev);
-            if (next.has(email)) next.delete(email);
-            else next.add(email);
-            return next;
-        });
-    };
-
-    const toggleAllBulkAccounts = () => {
-        setSelectedBulkAccounts(prev => (prev.size === accounts.length ? new Set() : new Set(accounts.map(a => a.email))));
-    };
-
     const startBulkUsers = async () => {
-        if (!selectedBulkAccounts.size) return toast('Select at least one account', 'err');
+        const pastedCount = bulkUsersText.split('\n').map(l => l.trim()).filter(l => l.includes('@')).length;
+        if (!pastedCount) return toast('Paste at least one account (email:password per line)', 'err');
         if (bulkUsersRunning) return;
-        const accountsList = [...selectedBulkAccounts].map(email => ({ email, targetDomain: bulkUsersDomain.trim() || undefined }));
         setBulkUsersRunning(true);
         try {
             const res = await fetch(`${API_URL}/dynu/users/bulk`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ accounts: accountsList, concurrency: bulkUsersConcurrency, usersPerAccount })
+                body: JSON.stringify({ rawText: bulkUsersText, concurrency: bulkUsersConcurrency, usersPerAccount, targetDomain: bulkUsersDomain.trim() || undefined })
             });
             const data = await res.json();
             if (res.ok) {
@@ -830,34 +817,19 @@ const DynuDomains: React.FC = () => {
                             )}
                         </div>
 
-                        {/* account multi-select */}
-                        <div className="rounded-xl bg-black/30 border border-white/10 overflow-hidden">
-                            <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
-                                <span className="text-[10px] uppercase tracking-widest font-black text-[var(--text-muted)]">Accounts ({selectedBulkAccounts.size}/{accounts.length})</span>
-                                <button onClick={toggleAllBulkAccounts} disabled={!accounts.length} className="text-[10px] font-black uppercase text-indigo-300 hover:text-indigo-200 disabled:opacity-40">
-                                    {selectedBulkAccounts.size === accounts.length && accounts.length > 0 ? 'Clear all' : 'Select all'}
-                                </button>
-                            </div>
-                            <div className="max-h-44 overflow-y-auto">
-                                {accounts.length === 0 && (
-                                    <div className="px-3 py-4 text-[11px] text-[var(--text-muted)]">No verified accounts found — run List Accounts first.</div>
-                                )}
-                                {accounts.map(a => {
-                                    const st = (bulkUsersJob?.accounts || []).find((j: BulkUserAccountStatus) => j.email === a.email);
-                                    return (
-                                        <label key={a.email} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 cursor-pointer">
-                                            <input type="checkbox" checked={selectedBulkAccounts.has(a.email)} onChange={() => toggleBulkAccount(a.email)} className="accent-indigo-500" />
-                                            <span className="flex-1 truncate text-[11px] font-mono text-[var(--text-main)]">{a.email}</span>
-                                            {st && (
-                                                <span className={`shrink-0 text-[9px] font-black uppercase ${st.status === 'done' ? 'text-emerald-400' : st.status === 'failed' ? 'text-rose-400' : st.status === 'running' ? 'text-amber-400 animate-pulse' : 'text-white/40'}`}>
-                                                    {st.status === 'done' ? `✓ ${st.usersCreated}` : st.status === 'failed' ? '✕' : st.status === 'running' ? '…' : st.status}
-                                                </span>
-                                            )}
-                                        </label>
-                                    );
-                                })}
-                            </div>
-                        </div>
+                        {/* account paste input */}
+                        <textarea
+                            rows={6}
+                            placeholder={'admin@workspace1.com:password123\nadmin@workspace2.com:pass456:aliasdomain.com\none-per-line'}
+                            value={bulkUsersText}
+                            onChange={e => setBulkUsersText(e.target.value)}
+                            style={{ resize: 'vertical' }}
+                            disabled={bulkUsersRunning}
+                            className="w-full px-4 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono"
+                        />
+                        <p className="text-[10px] text-[var(--text-muted)]">
+                            One account per line. Format: <span className="font-mono text-cyan-400">email:password</span> or <span className="font-mono text-cyan-400">email:password:target-domain</span>. Password can be omitted — it will be read from result_accounts.txt.
+                        </p>
 
                         {/* settings */}
                         <div className="grid grid-cols-2 gap-3">
@@ -903,8 +875,8 @@ const DynuDomains: React.FC = () => {
                                 {bulkUsersJob?.stopRequested ? '⏹ Stopping…' : '⏹ Stop Job'}
                             </button>
                         ) : (
-                            <button onClick={startBulkUsers} disabled={!selectedBulkAccounts.size} className="w-full py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-sm transition-all disabled:opacity-50">
-                                {selectedBulkAccounts.size ? `▶ Create Users (${selectedBulkAccounts.size} account${selectedBulkAccounts.size > 1 ? 's' : ''})` : '▶ Select accounts to start'}
+                            <button onClick={startBulkUsers} disabled={!bulkUsersText.trim()} className="w-full py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-sm transition-all disabled:opacity-50">
+                                {bulkUsersText.trim() ? `▶ Create Users (${bulkUsersText.split('\n').map(l => l.trim()).filter(l => l.includes('@')).length})` : '▶ Paste accounts to start'}
                             </button>
                         )}
                         <p className="text-[10px] text-[var(--text-muted)]">
