@@ -28,6 +28,7 @@ export interface AppSettings {
   cloudflareKey?: string;
   cloudflareZoneId?: string;
   dynuApiKey?: string;
+  dynuApexIp?: string;
   telegramToken?: string;
   telegramChatId?: string;
   proxiesList?: string;

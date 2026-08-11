@@ -2970,11 +2970,21 @@ app.post('/api/dynu/provision', async (req, res) => {
         if (needDynuHost) {
             const dynuService = det.dynu?.service || (await import('./services/dynuService.js')).default;
             if (dynuService) {
-                dynuLog('INFO', `🏠 Creating Dynamic DNS host ${subdomain} in Dynu (POST /v2/dns)...`);
-                const hostRes = await dynuService.ensureHost(subdomain);
+                // Apex A-record IP: explicit override from config, else the
+                // server's current public IP.
+                const apexIp = (config.dynuApexIp || '').trim() || await dynuService.getPublicIp();
+                dynuLog('INFO', `🏠 Creating Dynamic DNS host ${subdomain} in Dynu (POST /v2/dns)...${apexIp ? ` | A record -> ${apexIp}` : ' | no IP available for A record'}`);
+                const hostRes = await dynuService.ensureHost(subdomain, apexIp);
                 if (hostRes.success) {
-                    dynuHost = { created: true, already: !!hostRes.already, zoneId: hostRes.zoneId || null };
                     provider = 'dynu';
+                    dynuHost = { created: true, already: !!hostRes.already, zoneId: hostRes.zoneId || null };
+                    if (hostRes.aRecord) {
+                        if (hostRes.aRecord.error) {
+                            dynuLog('WARN', `⚠️ Could not set A record for ${subdomain}: ${hostRes.aRecord.error}`);
+                        } else {
+                            dynuLog('INFO', `✅ A record -> ${hostRes.aRecord.ip} for ${subdomain}${hostRes.aRecord.already ? ' (already)' : ''}`);
+                        }
+                    }
                     dynuLog('INFO', `✅ Dynamic DNS host ready: ${subdomain}${hostRes.already ? ' (already existed)' : ''}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
                 } else {
                     dynuLog('ERROR', `❌ Could not create Dynamic DNS host for ${subdomain}: ${hostRes.error}`);

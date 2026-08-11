@@ -93,42 +93,44 @@ export default class DynuService {
     }
 
     /**
+     * Detect the server's current public IPv4 address (used for the host's
+     * A record). Returns null when all sources fail.
+     */
+    async getPublicIp() {
+        const urls = ['https://api.ipify.org', 'https://ifconfig.me/ip', 'https://checkip.amazonaws.com'];
+        for (const url of urls) {
+            try {
+                const resp = await axios.get(url, { timeout: 10000 });
+                const ip = String(resp.data || '').trim().split('\n')[0].trim();
+                if (/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) return ip;
+            } catch (e) { /* try next source */ }
+        }
+        return null;
+    }
+
+    /**
      * Create a Dynamic DNS host (managed domain) in Dynu for `hostname`.
      * This is the API equivalent of "Add Dynamic DNS" in the Dynu dashboard.
-     * Dynu rejects partial payloads with HTTP 501 "Argument Exception" (their
-     * validation error), so several full-payload shapes are attempted and the
-     * exact response of each is surfaced for diagnosis.
+     * Enables Wildcard IPv4/IPv6 aliases and the IPv6 toggle, and (when an IP
+     * is supplied) creates the host's A record pointing at it. Dynu rejects
+     * partial payloads with HTTP 501 "Argument Exception" (their validation
+     * error), so a full writable-fields payload is sent first.
      * Returns { success, zoneId, hostname, already, method, error }.
      */
-    async createHost(hostname) {
+    async createHost(hostname, ipv4Address = null) {
         const attempts = [
             {
                 label: 'full',
                 body: {
                     name: hostname,
                     group: '',
-                    ipv4Address: '0.0.0.0',
+                    ipv4Address: ipv4Address || '0.0.0.0',
                     ipv6Address: '',
                     ttl: 300,
                     ipv4: true,
-                    ipv6: false,
-                    ipv4WildcardAlias: false,
-                    ipv6WildcardAlias: false,
-                    allowZoneTransfer: false,
-                    dnssec: false
-                }
-            },
-            {
-                label: 'no-ip',
-                body: {
-                    name: hostname,
-                    group: '',
-                    ipv6Address: '',
-                    ttl: 300,
-                    ipv4: false,
-                    ipv6: false,
-                    ipv4WildcardAlias: false,
-                    ipv6WildcardAlias: false,
+                    ipv6: true,
+                    ipv4WildcardAlias: true,
+                    ipv6WildcardAlias: true,
                     allowZoneTransfer: false,
                     dnssec: false
                 }
@@ -173,20 +175,40 @@ export default class DynuService {
      * Checks the zone list for an exact-name match first (getroot resolves the
      * parent zone, so it cannot tell whether the subdomain host itself exists),
      * then creates it via POST /dns. Re-checks after a create failure in case
-     * of a race. Returns { success, zoneId, hostname, already, error }.
+     * of a race. When `ipv4Address` is supplied, also points the host's A
+     * record at that IP. Returns { success, zoneId, hostname, already,
+     * aRecord?, error }.
      */
-    async ensureHost(hostname) {
+    async ensureHost(hostname, ipv4Address = null) {
         const lower = String(hostname).toLowerCase();
         const match = (zones) => zones.find(z => String(z.name).toLowerCase() === lower);
         const existing = match(await this.listZones());
-        if (existing) return { success: true, already: true, zoneId: existing.id, hostname: existing.name };
+        let zoneId = existing ? existing.id : null;
+        let already = !!existing;
+        if (!existing) {
+            const created = await this.createHost(lower, ipv4Address);
+            if (created.success) {
+                zoneId = created.zoneId;
+                already = !!created.already;
+            } else {
+                const nowExisting = match(await this.listZones());
+                if (nowExisting) {
+                    zoneId = nowExisting.id;
+                    already = true;
+                } else {
+                    return created;
+                }
+            }
+        }
 
-        const created = await this.createHost(lower);
-        if (created.success) return created;
-
-        const nowExisting = match(await this.listZones());
-        if (nowExisting) return { success: true, already: true, zoneId: nowExisting.id, hostname: nowExisting.name };
-        return created;
+        let aRecord = null;
+        if (zoneId && ipv4Address) {
+            const aRes = await this.upsertARecord(zoneId, lower, ipv4Address);
+            aRecord = aRes.success
+                ? { already: !!aRes.already, ip: ipv4Address }
+                : { error: aRes.error };
+        }
+        return { success: true, zoneId, hostname: lower, already, aRecord };
     }
 
     async listRecords(zoneId, recordType) {
@@ -296,6 +318,50 @@ export default class DynuService {
             console.error('Dynu Service Error (deleteRecord):', e.message);
             return false;
         }
+    }
+
+    async addARecord(zoneId, nodeName, ipv4Address) {
+        try {
+            const resp = await axios.post(`${this.baseUrl}/dns/${zoneId}/record`, {
+                nodeName: nodeName || '',
+                recordType: 'A',
+                ipv4Address,
+                ttl: 300,
+                state: true,
+                group: ''
+            }, { headers: this.headers(), timeout: 15000 });
+            const data = this.unwrap(resp);
+            return { success: true, record: data };
+        } catch (e) {
+            console.error('Dynu Service Error (addARecord):', e.message);
+            return { success: false, error: e.message };
+        }
+    }
+
+    /**
+     * Point the A record at the host root at `ipv4Address`. No-op when an
+     * identical A record exists; otherwise replaces any stale A at the node.
+     */
+    async upsertARecord(zoneId, hostname, ipv4Address) {
+        const records = await this.listRecords(zoneId, 'A');
+        const lowerName = hostname.toLowerCase();
+        const matches = records.filter(r => {
+            const host = (r.hostname || '').toLowerCase();
+            const n = (r.nodeName || '').toLowerCase();
+            return host === lowerName || n === '';
+        });
+        const existing = matches.find(r => {
+            const ip = String(r.ipv4Address || r.content || '').trim();
+            return ip === ipv4Address;
+        });
+        if (existing) return { success: true, zoneId, already: true };
+
+        for (const rec of matches) {
+            await this.deleteRecord(zoneId, rec.id);
+        }
+        const added = await this.addARecord(zoneId, '', ipv4Address);
+        if (!added.success) return { success: false, error: added.error };
+        return { success: true, zoneId };
     }
 
     /**
