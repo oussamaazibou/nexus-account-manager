@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import UserAgent from 'user-agents';
 import http from 'http';
+import https from 'https';
 
 process.setMaxListeners(0);
 
@@ -163,12 +164,16 @@ export class HeroSMSAPI {
         this.baseUrl = baseUrl;
     }
     async _request(method, endpoint, data = null) {
-        const url = `${this.baseUrl}/stubs/handler_api.php`;
+        // baseUrl may be a bare host (append /stubs/handler_api.php) or already the full API endpoint
+        const base = String(this.baseUrl || '').trim().replace(/\/+$/, '');
+        const apiPath = /handler_api\.php$/i.test(base) ? '' : '/stubs/handler_api.php';
+        const url = `${base}${apiPath}`;
         const params = new URLSearchParams({ api_key: this.apiKey, action: endpoint });
         if (data) Object.entries(data).forEach(([k, v]) => params.set(k, v));
         const fullUrl = `${url}?${params.toString()}`;
         return new Promise((resolve, reject) => {
-            const req = http.get(fullUrl, { timeout: 30000 }, (res) => {
+            const lib = /^https:/i.test(fullUrl) ? https : http;
+            const req = lib.get(fullUrl, { timeout: 30000 }, (res) => {
                 let body = '';
                 res.on('data', (chunk) => body += chunk);
                 res.on('end', () => resolve(body ? body.split('\n').filter(Boolean) : []));
@@ -667,7 +672,7 @@ export class GoogleWorkspaceUserCreator {
         try {
             const hasOtpInput = await this.page.evaluate(() => {
                 return !!document.querySelector(
-                    'input[name="totpPin"], input[id*="totp"], input[name*="otp"], input[aria-label*="authenticator"]'
+                    'input[name="totpPin"], input[id*="totp"], input[name*="otp"], input[aria-label*="authenticator"], input[placeholder*="code"], input[aria-label*="verification"], input[aria-label*="enter the code"], input[aria-label*="6-digit"]'
                 );
             }).catch(() => false);
             if (!hasOtpInput) return false;
@@ -807,21 +812,25 @@ export class GoogleWorkspaceUserCreator {
         const smsChallenge = await this.page.evaluate(() => {
             const txt = (document.body && document.body.innerText) || '';
             const url = location.href || '';
-            const hasPhoneInput = !!document.querySelector('input[type="tel"], input[aria-label*="phone" i], input[aria-label*="mobile" i]');
             const isChallenge = url.includes('/challenge/');
-            const smsText = /(enter a |)phone number|text message|sms|mobile number/i.test(txt);
-            return (hasPhoneInput || smsText) && isChallenge;
+            const hasPhoneInput = !!document.querySelector('input[type="tel"], input[aria-label*="phone" i], input[aria-label*="mobile" i]');
+            const hasCodeOrOtpInput = !!document.querySelector(
+                'input[name="totpPin"], input[id*="totp"], input[name*="otp"], input[aria-label*="authenticator"], input[placeholder*="code"], input[id*="otp"], input[aria-label*="verification"], input#idvPin, input#code, input[name="code"], input[name="pin"]'
+            );
+            const asksPhone = /enter.{0,30}(phone|mobile) number|verify.{0,30}(phone|mobile)|phone verification|send.{0,20}(code|sms)|text message/i.test(txt);
+            return isChallenge && hasPhoneInput && !hasCodeOrOtpInput && asksPhone;
         }).catch(() => false);
 
         if (smsChallenge) {
             if (this.skipSms || !this.heroSms) {
-                this.logger.warn(`[${this.threadId}] 📱 SMS challenge detected but SMS handling is disabled — skipping`);
-                return false;
-            }
-            const handled = await this.#handleSms();
-            if (!handled) {
-                this.logger.warn(`[${this.threadId}] ❌ SMS challenge could not be resolved — skipping`);
-                return false;
+                this.logger.warn(`[${this.threadId}] 📱 SMS challenge detected but SMS handling is disabled — falling through`);
+            } else {
+                const handled = await this.#handleSms();
+                if (handled) {
+                    this.logger.info(`[${this.threadId}] ✅ SMS challenge resolved`);
+                } else {
+                    this.logger.warn(`[${this.threadId}] ⚠️ SMS challenge could not be resolved — falling through to challenge loop (OTP/2FA may apply)`);
+                }
             }
         }
 
