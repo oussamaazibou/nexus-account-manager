@@ -119,7 +119,7 @@ async function ensureDynuHost(det, hostname, log, domain) {
         log(`[DNS] Could not create Dynu ${kind} for ${hostname}: ${hostRes.error}`);
         return false;
     }
-    log(`[DNS] Dynu ${kind} ready for ${hostname}${hostRes.already ? ' (already existed)' : ''}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
+    log(`[DNS] Dynu ${kind} ready for ${hostname}${hostRes.already ? ' (already existed)' : ''}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}${hostRes.aRecord?.ip ? ` · A=${hostRes.aRecord.ip}` : ' · A=not set'}`);
     return true;
 }
 

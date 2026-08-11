@@ -118,18 +118,23 @@ export default class DynuService {
      * Returns { success, zoneId, hostname, already, method, error }.
      */
     async createHost(hostname, ipv4Address = null) {
+        const hasIp = !!ipv4Address;
         const attempts = [
             {
                 label: 'full',
                 body: {
                     name: hostname,
                     group: '',
-                    ipv4Address: ipv4Address || '0.0.0.0',
+                    // Only include ipv4 fields when a real address is known —
+                    // never write a fake 0.0.0.0 A record into Dynu.
+                    ...(hasIp ? {
+                        ipv4Address,
+                        ipv4: true,
+                        ipv4WildcardAlias: true
+                    } : {}),
                     ipv6Address: '',
                     ttl: 300,
-                    ipv4: true,
                     ipv6: true,
-                    ipv4WildcardAlias: true,
                     ipv6WildcardAlias: true,
                     allowZoneTransfer: false,
                     dnssec: false
@@ -181,6 +186,12 @@ export default class DynuService {
      */
     async ensureHost(hostname, ipv4Address = null) {
         const lower = String(hostname).toLowerCase();
+        // When no IP is given, resolve the server's public IP automatically so
+        // the host's A record always points at where the app is actually
+        // running (never a placeholder like 0.0.0.0).
+        if (!ipv4Address) {
+            ipv4Address = await this.getPublicIp();
+        }
         const match = (zones) => zones.find(z => String(z.name).toLowerCase() === lower);
         const existing = match(await this.listZones());
         let zoneId = existing ? existing.id : null;
