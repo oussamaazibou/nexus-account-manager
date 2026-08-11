@@ -1459,7 +1459,7 @@ export class GoogleWorkspaceUserCreator {
         rows = await setupRows();
         this.logger.info(`[${this.threadId}] 📊 Rows after adding: ${rows.rowCount} (target ${this.usersCount}, tagged rows: ${rows.taggedRows})`);
 
-        const fillField = async (rowIdx, field, value) => {
+        const fillField = async (rowIdx, field, value, allowSuffix) => {
             const sel = `input[data-bulk-row="${rowIdx}"][data-bulk-field="${field}"]`;
             for (let attempt = 0; attempt < 3; attempt++) {
                 const handle = await this.page.$(sel).catch(() => null);
@@ -1475,10 +1475,13 @@ export class GoogleWorkspaceUserCreator {
                 await this.#delay(100, 200);
                 await this.page.keyboard.type(value, { delay: 20 + Math.random() * 30 });
                 await this.#delay(150, 250);
-                const landed = await this.page.evaluate((s, expected) => {
+                const landed = await this.page.evaluate((s, expected, allowSuffix) => {
                     const el = document.querySelector(s);
-                    return !!el && (el.value || '') === expected;
-                }, sel, value).catch(() => false);
+                    if (!el) return false;
+                    const v = (el.value || '');
+                    if (v === expected) return true;
+                    return allowSuffix && v.toLowerCase().startsWith(expected.toLowerCase());
+                }, sel, value, allowSuffix).catch(() => false);
                 if (landed) return true;
                 await this.#delay(400, 700);
             }
@@ -1501,21 +1504,24 @@ export class GoogleWorkspaceUserCreator {
         for (const row of taggedList) {
             const firstName = pickRandom(FIRST_NAMES);
             const lastName = pickRandom(LAST_NAMES);
+            const username = this.#makeUsername(firstName, lastName);
             const okFirst = await fillField(row, 'first', firstName);
             await this.#delay(150, 300);
             const okLast = await fillField(row, 'last', lastName);
             await this.#delay(150, 300);
+            const okAlias = await fillField(row, 'alias', username, true);
+            await this.#delay(150, 300);
             const okDomain = await this.#selectOtherDomain(row, this.targetDomain);
             await this.#delay(150, 300);
-            filledCount += (okFirst && okLast) ? 1 : 0;
-            this.logger.info(`[${this.threadId}] 👤 Row ${filledCount}/${this.usersCount}: ${firstName} ${lastName} (first:${okFirst}, last:${okLast}, domain:${okDomain})`);
+            filledCount += (okFirst && okLast && okAlias) ? 1 : 0;
+            this.logger.info(`[${this.threadId}] 👤 Row ${filledCount}/${this.usersCount}: ${firstName} ${lastName} (${username}) (first:${okFirst}, last:${okLast}, alias:${okAlias}, domain:${okDomain})`);
         }
 
-        await this.#delay(500, 1000);
+        await this.#delay(1500, 2500);
         let continueClicked = false;
-        for (let i = 0; i < 5 && !continueClicked; i++) {
+        for (let i = 0; i < 8 && !continueClicked; i++) {
             continueClicked = await this.#realClickButton(['Continue', 'Continuer', 'Next', 'Suivant', 'Add these users', 'Add ' + filledCount + ' users', 'Add users', 'Confirm']);
-            if (!continueClicked) await this.#delay(800, 1200);
+            if (!continueClicked) await this.#delay(1000, 1500);
         }
         this.logger.info(`[${this.threadId}] ▶️ ${continueClicked ? 'Clicked Continue — user creation submitted' : '⚠️ Continue button not found'}`);
         await this.#delay(1500, 2500);
@@ -1684,6 +1690,13 @@ export class GoogleWorkspaceUserCreator {
         }
         this.logger.warn(`[${this.threadId}] ⚠️ Domain picker row ${row} failed: ${lastState}`);
         return false;
+    }
+
+    #makeUsername(first, last) {
+        const clean = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+        const base = `${clean(first) || 'user'}.${clean(last) || 'name'}`.slice(0, 20);
+        const suffix = String(1000 + Math.floor(Math.random() * 9000));
+        return `${base}${suffix}`.slice(0, 24);
     }
 
     async #cleanup() {
