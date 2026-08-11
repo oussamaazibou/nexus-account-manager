@@ -597,7 +597,11 @@ export class GoogleWorkspaceUserCreator {
             }
             await this.#handleCheckoutPage();
             await this.#navigateToGetupgrade();
-            await this.#createUsers();
+            const created = await this.#createUsers();
+            if (!created) {
+                this.logger.warn(`[${this.threadId}] ❌ User creation did not complete for ${this.email}`);
+                return false;
+            }
             this.logger.info(`[${this.threadId}] ✅ All ${this.usersCount} users created for ${this.email}`);
             return true;
         } catch (err) {
@@ -1524,11 +1528,7 @@ export class GoogleWorkspaceUserCreator {
                 const formStillShown = n.includes('first name') && n.includes('last name');
                 const hasTempPw = n.includes('temporary password') || n.includes('temp password');
                 const hasAdded = /(\d+\s+users?\s*(added|created))|(users?\s*(added|created)\s*successfully)|(all\s+\d+\s+users?)/i.test(n);
-                const hasDoneBtn = [...document.querySelectorAll('button, [role="button"]')].some(b => {
-                    const t = (b.textContent || b.getAttribute('aria-label') || '').toLowerCase().trim();
-                    return /^(done|finish|all done|close)$/.test(t) || t === 'done' || t === 'finish' || t === 'close';
-                });
-                return hasTempPw || (hasAdded && !formStillShown) || (hasDoneBtn && !formStillShown);
+                return hasTempPw || (hasAdded && !formStillShown);
             }).catch(() => false);
             if (!completed) {
                 if (w > 0 && w % 15 === 0) {
@@ -1541,10 +1541,19 @@ export class GoogleWorkspaceUserCreator {
         }
         if (!completed) {
             this.logger.warn(`[${this.threadId}] ⏱ Timed out waiting for credentials after ${filledCount} users — closing anyway`);
+            const snippet = await this.page.evaluate(() => (document.body && document.body.innerText || '').slice(0, 400)).catch(() => '');
+            this.logger.warn(`[${this.threadId}] 📋 Page text at timeout: ${snippet}`);
+            await this.page.screenshot({ path: `bulkadd-fail-${this.threadId}.png` }).catch(() => {});
+        } else if (!continueClicked) {
+            this.logger.warn(`[${this.threadId}] ⚠️ Completion detected but Continue was never clicked — not counting as created`);
         }
-        this.logger.info(`[${this.threadId}] 🎉 Bulk add form submitted (${filledCount} users)`);
-        this.usersCreated += filledCount;
-        return true;
+        if (continueClicked && completed && filledCount > 0) {
+            this.usersCreated += filledCount;
+            this.logger.info(`[${this.threadId}] 🎉 Bulk add form submitted (${filledCount} users)`);
+            return true;
+        }
+        this.logger.warn(`[${this.threadId}] ❌ Bulk add did not complete (filled:${filledCount}, continue:${continueClicked}, completed:${completed})`);
+        return false;
     }
 
     async #selectOtherDomain(row, targetDomain) {

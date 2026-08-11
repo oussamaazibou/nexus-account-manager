@@ -3299,6 +3299,7 @@ async function runBulkUserJob() {
                     acc.error = null;
                     bulkUserJob.ok++;
                     dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ✅ ${acc.email} — ${creator.usersCreated} users created`);
+                    for (const l of logger.buf.slice(-10)) dynuLog('INFO', `👥 [${idx + 1}] ${l.msg}`);
                 } else {
                     acc.status = 'failed';
                     const lastIssue = [...logger.buf].reverse().find(l => l.level === 'ERROR' || l.level === 'WARN');
