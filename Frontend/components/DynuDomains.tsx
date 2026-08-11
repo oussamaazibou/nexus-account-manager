@@ -41,6 +41,31 @@ interface BulkResult {
     status?: string;
 }
 
+interface BulkUserAccountStatus {
+    email: string;
+    password?: string;
+    targetDomain?: string;
+    status: string;
+    usersCreated: number;
+    error?: string | null;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+}
+
+interface BulkUserJobStatus {
+    running: boolean;
+    stopRequested: boolean;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+    total: number;
+    done: number;
+    ok: number;
+    failed: number;
+    concurrency: number;
+    usersPerAccount: number;
+    accounts: BulkUserAccountStatus[];
+}
+
 interface DynuZone {
     id: number;
     name: string;
@@ -110,6 +135,14 @@ const DynuDomains: React.FC = () => {
     const [bulkDomainsText, setBulkDomainsText] = useState('');
     const [bulking, setBulking] = useState(false);
     const [bulkResults, setBulkResults] = useState<BulkResult[]>([]);
+
+    // Bulk user creation
+    const [selectedBulkAccounts, setSelectedBulkAccounts] = useState<Set<string>>(new Set());
+    const [usersPerAccount, setUsersPerAccount] = useState(9);
+    const [bulkUsersConcurrency, setBulkUsersConcurrency] = useState(2);
+    const [bulkUsersDomain, setBulkUsersDomain] = useState('');
+    const [bulkUsersRunning, setBulkUsersRunning] = useState(false);
+    const [bulkUsersJob, setBulkUsersJob] = useState<BulkUserJobStatus | null>(null);
 
     // Activity log
     const [logs, setLogs] = useState<DynuLog[]>([]);
@@ -318,6 +351,72 @@ const DynuDomains: React.FC = () => {
             toast(`Error: ${e.message}`, 'err');
         } finally {
             setBulking(false);
+        }
+    };
+
+    // ── Bulk User Creation (per-account Puppeteer job) ──────────────────────
+    const loadBulkUserStatus = useCallback(async () => {
+        try {
+            const res = await fetch(`${API_URL}/dynu/users/bulk/status`);
+            if (res.ok) {
+                const data = await res.json();
+                setBulkUsersJob(data);
+                setBulkUsersRunning(!!data.running);
+            }
+        } catch { /* silent */ }
+    }, []);
+
+    useEffect(() => {
+        loadBulkUserStatus();
+        const iv = setInterval(loadBulkUserStatus, 2000);
+        return () => clearInterval(iv);
+    }, [loadBulkUserStatus]);
+
+    const toggleBulkAccount = (email: string) => {
+        setSelectedBulkAccounts(prev => {
+            const next = new Set(prev);
+            if (next.has(email)) next.delete(email);
+            else next.add(email);
+            return next;
+        });
+    };
+
+    const toggleAllBulkAccounts = () => {
+        setSelectedBulkAccounts(prev => (prev.size === accounts.length ? new Set() : new Set(accounts.map(a => a.email))));
+    };
+
+    const startBulkUsers = async () => {
+        if (!selectedBulkAccounts.size) return toast('Select at least one account', 'err');
+        if (bulkUsersRunning) return;
+        const accountsList = [...selectedBulkAccounts].map(email => ({ email, targetDomain: bulkUsersDomain.trim() || undefined }));
+        setBulkUsersRunning(true);
+        try {
+            const res = await fetch(`${API_URL}/dynu/users/bulk`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accounts: accountsList, concurrency: bulkUsersConcurrency, usersPerAccount })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                toast(`Bulk user creation started: ${data.total} account(s)`, 'ok');
+                await loadBulkUserStatus();
+            } else {
+                setBulkUsersRunning(false);
+                toast(`Error: ${data.error}`, 'err');
+            }
+        } catch (e: any) {
+            setBulkUsersRunning(false);
+            toast(`Error: ${e.message}`, 'err');
+        }
+    };
+
+    const stopBulkUsers = async () => {
+        try {
+            const res = await fetch(`${API_URL}/dynu/users/bulk/stop`, { method: 'POST' });
+            const data = await res.json();
+            toast(data.success ? 'Stop requested — finishing current accounts' : `Error: ${data.error}`, data.success ? 'info' : 'err');
+        } catch (e: any) {
+            toast(`Error: ${e.message}`, 'err');
         }
     };
 
@@ -721,6 +820,96 @@ const DynuDomains: React.FC = () => {
                                 ))}
                             </div>
                         )}
+                    </div>
+
+                    <div className="glass-card p-5 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Bulk User Creation</h3>
+                            {bulkUsersRunning && (
+                                <span className="text-[10px] px-2 py-0.5 rounded font-black uppercase bg-amber-500/15 text-amber-400 animate-pulse">Running</span>
+                            )}
+                        </div>
+
+                        {/* account multi-select */}
+                        <div className="rounded-xl bg-black/30 border border-white/10 overflow-hidden">
+                            <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+                                <span className="text-[10px] uppercase tracking-widest font-black text-[var(--text-muted)]">Accounts ({selectedBulkAccounts.size}/{accounts.length})</span>
+                                <button onClick={toggleAllBulkAccounts} disabled={!accounts.length} className="text-[10px] font-black uppercase text-indigo-300 hover:text-indigo-200 disabled:opacity-40">
+                                    {selectedBulkAccounts.size === accounts.length && accounts.length > 0 ? 'Clear all' : 'Select all'}
+                                </button>
+                            </div>
+                            <div className="max-h-44 overflow-y-auto">
+                                {accounts.length === 0 && (
+                                    <div className="px-3 py-4 text-[11px] text-[var(--text-muted)]">No verified accounts found — run List Accounts first.</div>
+                                )}
+                                {accounts.map(a => {
+                                    const st = (bulkUsersJob?.accounts || []).find((j: BulkUserAccountStatus) => j.email === a.email);
+                                    return (
+                                        <label key={a.email} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 cursor-pointer">
+                                            <input type="checkbox" checked={selectedBulkAccounts.has(a.email)} onChange={() => toggleBulkAccount(a.email)} className="accent-indigo-500" />
+                                            <span className="flex-1 truncate text-[11px] font-mono text-[var(--text-main)]">{a.email}</span>
+                                            {st && (
+                                                <span className={`shrink-0 text-[9px] font-black uppercase ${st.status === 'done' ? 'text-emerald-400' : st.status === 'failed' ? 'text-rose-400' : st.status === 'running' ? 'text-amber-400 animate-pulse' : 'text-white/40'}`}>
+                                                    {st.status === 'done' ? `✓ ${st.usersCreated}` : st.status === 'failed' ? '✕' : st.status === 'running' ? '…' : st.status}
+                                                </span>
+                                            )}
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* settings */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="text-[10px] uppercase tracking-widest font-black text-[var(--text-muted)]">Users / account</label>
+                                <input type="number" min={1} max={500} value={usersPerAccount} onChange={e => setUsersPerAccount(Math.min(500, Math.max(1, parseInt(e.target.value) || 9)))} className="mt-1 w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)]" />
+                            </div>
+                            <div>
+                                <label className="text-[10px] uppercase tracking-widest font-black text-[var(--text-muted)]">Concurrency</label>
+                                <input type="number" min={1} max={10} value={bulkUsersConcurrency} onChange={e => setBulkUsersConcurrency(Math.min(10, Math.max(1, parseInt(e.target.value) || 2)))} className="mt-1 w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)]" />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="text-[10px] uppercase tracking-widest font-black text-[var(--text-muted)]">Target domain (optional)</label>
+                            <input value={bulkUsersDomain} onChange={e => setBulkUsersDomain(e.target.value)} placeholder="alias-domain.com — empty = auto pick" className="mt-1 w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-indigo-500 text-[var(--text-main)] placeholder-[var(--text-muted)] font-mono" />
+                        </div>
+
+                        {(bulkUsersJob?.total ?? 0) > 0 && (
+                            <div className="rounded-xl bg-black/30 border border-white/5 p-3 space-y-2">
+                                <div className="flex items-center justify-between text-[10px] uppercase tracking-widest font-black text-[var(--text-muted)]">
+                                    <span>Job progress</span>
+                                    <span className="text-[var(--text-main)]">{bulkUsersJob!.done}/{bulkUsersJob!.total} · {bulkUsersJob!.ok} ok · {bulkUsersJob!.failed} failed</span>
+                                </div>
+                                <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                                    <div className="h-full bg-indigo-500 transition-all" style={{ width: `${bulkUsersJob!.total ? (bulkUsersJob!.done / bulkUsersJob!.total) * 100 : 0}%` }} />
+                                </div>
+                                {bulkUsersJob!.accounts.filter(a => a.status !== 'queued').map(a => (
+                                    <div key={a.email} className="flex items-center gap-2 text-[10px] font-mono">
+                                        <span className={`shrink-0 ${a.status === 'done' ? 'text-emerald-400' : a.status === 'failed' ? 'text-rose-400' : 'text-amber-400'}`}>
+                                            {a.status === 'done' ? '✓' : a.status === 'failed' ? '✕' : '…'}
+                                        </span>
+                                        <span className="flex-1 truncate text-[var(--text-muted)]">{a.email}</span>
+                                        {a.status === 'done' && <span className="shrink-0 text-emerald-400">{a.usersCreated} users</span>}
+                                        {a.status === 'failed' && a.error && <span className="shrink-0 truncate text-rose-400">{a.error}</span>}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {bulkUsersRunning ? (
+                            <button onClick={stopBulkUsers} disabled={bulkUsersJob?.stopRequested} className="w-full py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/40 text-red-400 font-black text-sm transition-all disabled:opacity-50">
+                                {bulkUsersJob?.stopRequested ? '⏹ Stopping…' : '⏹ Stop Job'}
+                            </button>
+                        ) : (
+                            <button onClick={startBulkUsers} disabled={!selectedBulkAccounts.size} className="w-full py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-black text-sm transition-all disabled:opacity-50">
+                                {selectedBulkAccounts.size ? `▶ Create Users (${selectedBulkAccounts.size} account${selectedBulkAccounts.size > 1 ? 's' : ''})` : '▶ Select accounts to start'}
+                            </button>
+                        )}
+                        <p className="text-[10px] text-[var(--text-muted)]">
+                            Opens each account's Google Admin, navigates to "Bulk add users" and creates the given number of users. Passwords come from result_accounts.txt; OTP + 2Captcha are auto-handled. Live progress shows in the Activity Log below.
+                        </p>
                     </div>
 
                     <div className="glass-card p-5 space-y-4">

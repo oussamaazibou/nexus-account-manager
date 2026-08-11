@@ -3134,6 +3134,222 @@ app.post('/api/dynu/provision/bulk', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// ── BULK WORKSPACE USER CREATION (Puppeteer per account) ────────────────
+// Picks result accounts, opens each one's Google Admin in a real browser,
+// navigates to the "Bulk add users" page and creates N users per account.
+// Concurrency-limited. Logs land in the Dynu activity log + per-email logs.
+// ═══════════════════════════════════════════════════════════════════════
+
+const bulkUserJob = {
+    running: false,
+    stopRequested: false,
+    startedAt: null,
+    finishedAt: null,
+    total: 0,
+    done: 0,
+    ok: 0,
+    failed: 0,
+    concurrency: 2,
+    usersPerAccount: 9,
+    accounts: [],   // [{ email, password, targetDomain, status, usersCreated, error, startedAt, finishedAt }]
+};
+
+function parseProxyLine(line) {
+    const s = String(line || '').trim();
+    if (!s || s.startsWith('#')) return null;
+    const [host, port, user, pass] = s.split(':');
+    if (!host || !port) return null;
+    return { host, port: parseInt(port, 10) || 0, user, pass };
+}
+
+function getBulkProxyPool() {
+    const fromEnv = String(process.env.PROXY_LIST || '').split('\n').map(parseProxyLine).filter(Boolean);
+    if (fromEnv.length) return fromEnv;
+    try {
+        const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+        if (cfg.proxiesEnabled && cfg.proxiesList) {
+            return String(cfg.proxiesList).split('\n').map(parseProxyLine).filter(Boolean);
+        }
+    } catch { }
+    return [];
+}
+
+function readResultPasswordMap() {
+    const map = new Map();
+    const p = path.join(__dirname, 'result_accounts.txt');
+    if (!fs.existsSync(p)) return map;
+    for (const line of fs.readFileSync(p, 'utf8').split('\n')) {
+        const t = line.trim();
+        if (!t || t.startsWith('#')) continue;
+        const i = t.indexOf(':');
+        if (i > 0) map.set(t.slice(0, i).trim().toLowerCase(), t.slice(i + 1).trim());
+    }
+    return map;
+}
+
+function getBulkHeadless() {
+    try {
+        const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+        return cfg.headlessMode !== false;
+    } catch { return true; }
+}
+
+async function runBulkUserJob() {
+    if (bulkUserJob.running) return;
+    bulkUserJob.running = true;
+    bulkUserJob.stopRequested = false;
+    bulkUserJob.startedAt = new Date().toISOString();
+    bulkUserJob.finishedAt = null;
+    bulkUserJob.done = 0;
+    bulkUserJob.ok = 0;
+    bulkUserJob.failed = 0;
+
+    const { GoogleWorkspaceUserCreator, Logger, HeroSMSAPI } = await import('./services/bulkUserCreation.js');
+
+    // Hero-SMS provider (same key/url the rest of the app uses)
+    let heroSms = null;
+    let skipSms = true;
+    try {
+        const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+        if (cfg.heroSmsKey) {
+            heroSms = new HeroSMSAPI(cfg.heroSmsKey, cfg.heroSmsUrl || 'https://hero-sms.com/stubs/handler_api.php');
+            skipSms = false;
+        }
+    } catch { }
+
+    const proxyPool = getBulkProxyPool();
+    const accounts = bulkUserJob.accounts;
+    const concurrency = Math.max(1, bulkUserJob.concurrency);
+    const headless = getBulkHeadless();
+    dynuLog('INFO', `👥 Bulk user creation start | accounts=${accounts.length} | concurrency=${concurrency} | users/account=${bulkUserJob.usersPerAccount} | proxies=${proxyPool.length} | headless=${headless} | sms=${skipSms ? 'OFF' : 'ON'}`);
+
+    let nextIndex = 0;
+    const worker = async () => {
+        while (!bulkUserJob.stopRequested) {
+            const idx = nextIndex++;
+            if (idx >= accounts.length) break;
+            const acc = accounts[idx];
+            if (!acc.password) {
+                acc.status = 'failed';
+                acc.error = 'no password available for this account';
+                acc.finishedAt = new Date().toISOString();
+                bulkUserJob.failed++;
+                bulkUserJob.done++;
+                dynuLog('ERROR', `👥 [${idx + 1}/${accounts.length}] ❌ ${acc.email} — ${acc.error}`);
+                continue;
+            }
+            acc.status = 'running';
+            acc.startedAt = new Date().toISOString();
+            const proxy = proxyPool.length ? proxyPool[idx % proxyPool.length] : null;
+            dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ▶️ ${acc.email}${acc.targetDomain ? ` -> ${acc.targetDomain}` : ''} | thread start${proxy ? ` | proxy ${proxy.host}:${proxy.port}` : ' | no proxy'}`);
+            try {
+                const logger = new Logger();
+                const creator = new GoogleWorkspaceUserCreator(acc.email, acc.password, {
+                    threadId: idx + 1,
+                    headless,
+                    logger,
+                    skipSms,
+                    heroSms,
+                    usersCount: bulkUserJob.usersPerAccount,
+                    targetDomain: acc.targetDomain || '',
+                });
+                const ok = await creator.run(proxy);
+                acc.usersCreated = creator.usersCreated;
+                if (ok) {
+                    acc.status = 'done';
+                    acc.error = null;
+                    bulkUserJob.ok++;
+                    dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ✅ ${acc.email} — ${creator.usersCreated} users created`);
+                } else {
+                    acc.status = 'failed';
+                    acc.error = 'login or user creation failed';
+                    bulkUserJob.failed++;
+                    dynuLog('ERROR', `👥 [${idx + 1}/${accounts.length}] ❌ ${acc.email} — ${acc.error}`);
+                }
+            } catch (e) {
+                acc.status = 'failed';
+                acc.error = e.message;
+                bulkUserJob.failed++;
+                dynuLog('ERROR', `👥 [${idx + 1}/${accounts.length}] ❌ ${acc.email} — ${e.message}`);
+            } finally {
+                acc.finishedAt = new Date().toISOString();
+                bulkUserJob.done++;
+            }
+        }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, accounts.length) }, () => worker()));
+
+    bulkUserJob.finishedAt = new Date().toISOString();
+    bulkUserJob.running = false;
+    dynuLog('INFO', `👥 Bulk user creation finished | ok=${bulkUserJob.ok} | failed=${bulkUserJob.failed} | ${bulkUserJob.done}/${bulkUserJob.total}`);
+}
+
+// Start a bulk user-creation job. Body: { accounts: [{ email, password?, targetDomain? }], concurrency?, usersPerAccount? }
+app.post('/api/dynu/users/bulk', async (req, res) => {
+    try {
+        if (bulkUserJob.running) return res.status(409).json({ error: 'A bulk user-creation job is already running' });
+        const { accounts: rawAccounts, concurrency, usersPerAccount } = req.body || {};
+        if (!Array.isArray(rawAccounts) || !rawAccounts.length) return res.status(400).json({ error: 'accounts (non-empty array) required' });
+
+        const passwordMap = readResultPasswordMap();
+        const accounts = [];
+        const seen = new Set();
+        for (const a of rawAccounts) {
+            const email = String(a.email || '').trim().toLowerCase();
+            if (!email.includes('@') || seen.has(email)) continue;
+            seen.add(email);
+            const password = String(a.password || '').trim() || passwordMap.get(email) || '';
+            accounts.push({
+                email,
+                password,
+                targetDomain: String(a.targetDomain || '').trim(),
+                status: 'queued',
+                usersCreated: 0,
+                error: null,
+                startedAt: null,
+                finishedAt: null,
+            });
+        }
+        if (!accounts.length) return res.status(400).json({ error: 'No valid accounts provided' });
+
+        bulkUserJob.accounts = accounts;
+        bulkUserJob.total = accounts.length;
+        bulkUserJob.concurrency = Math.min(Math.max(parseInt(concurrency, 10) || 2, 1), 10);
+        bulkUserJob.usersPerAccount = Math.min(Math.max(parseInt(usersPerAccount, 10) || 9, 1), 500);
+
+        dynuLog('INFO', `👥 Bulk user creation queued | accounts=${accounts.length} | concurrency=${bulkUserJob.concurrency} | users/account=${bulkUserJob.usersPerAccount}`);
+        res.json({ success: true, total: accounts.length, concurrency: bulkUserJob.concurrency, usersPerAccount: bulkUserJob.usersPerAccount });
+        runBulkUserJob();   // fire-and-forget
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/dynu/users/bulk/status', (req, res) => {
+    res.json({
+        running: bulkUserJob.running,
+        stopRequested: bulkUserJob.stopRequested,
+        startedAt: bulkUserJob.startedAt,
+        finishedAt: bulkUserJob.finishedAt,
+        total: bulkUserJob.total,
+        done: bulkUserJob.done,
+        ok: bulkUserJob.ok,
+        failed: bulkUserJob.failed,
+        concurrency: bulkUserJob.concurrency,
+        usersPerAccount: bulkUserJob.usersPerAccount,
+        accounts: bulkUserJob.accounts,
+    });
+});
+
+app.post('/api/dynu/users/bulk/stop', (req, res) => {
+    if (!bulkUserJob.running) return res.json({ success: true, alreadyStopped: true });
+    bulkUserJob.stopRequested = true;
+    dynuLog('WARN', `⏹️ Stop requested for bulk user creation (${bulkUserJob.done}/${bulkUserJob.total} done)`);
+    res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // ── DYNU DOMAIN MANAGER (live API operations) ───────────────────────────
 // List domains, list records, add records, delete records. Mirrors the
 // Cloudflare "Domains" page but for Dynu.
