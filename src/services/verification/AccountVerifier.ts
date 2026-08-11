@@ -1171,7 +1171,7 @@ export class AccountVerifier {
                             break;
                         }
                     }
-                    Logger.info(`🔍 Checking domain verification status: fullDomain=${fullDomain} root=${rootDomain}`);
+                    Logger.info(`[${email}] 🔍 Checking domain verification status: fullDomain=${fullDomain} root=${rootDomain}`);
 
                     // ── CHECK IF DOMAIN IS ALREADY VERIFIED ──────────────────────────
                     const isAlreadyVerified = await this.isDomainVerified(page, fullDomain, rootDomain, subDomain);
@@ -1356,29 +1356,24 @@ export class AccountVerifier {
                         // Strip any surrounding quotes to prevent literal quotes in the record
                         const cleanedTxtRecord = txtRecord.replace(/^["']|["']$/g, '');
                         const dnsConfig = this.loadConfig();
-                        const dnsLog = (msg: string) => Logger.info(msg);
+                        const dnsLog = (msg: string) => Logger.info(`[${email}] ${msg}`);
 
-                        // Dynu free dynamic-DNS domains (dynu.net, dynuddns.net, ...)
-                        // have no apex zone in the account until the specific host is
-                        // created — so create the Dynamic DNS host first (the API
-                        // equivalent of "Add Dynamic DNS" in the dashboard).
+                        // Report which DNS provider owns the zone before touching
+                        // anything. upsertDnsTxt below creates the Dynu zone/host
+                        // itself (free dynamic-DNS host OR apex zone for a
+                        // registered domain on Dynu nameservers) when missing.
                         try {
                             const det = await detectDnsProvider(recordName, dnsConfig);
-                            if (det.provider === 'dynu' && det.freeDomain && det.dynu?.service) {
-                                const hostRes = await det.dynu.service.ensureHost(recordName);
-                                if (hostRes.success) {
-                                    Logger.info(hostRes.already
-                                        ? `ℹ️ Dynu host already exists: ${recordName}`
-                                        : `✅ Dynu Dynamic DNS host created: ${recordName}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
-                                } else {
-                                    Logger.warn(`⚠️ Could not create Dynu Dynamic DNS host for ${recordName}: ${hostRes.error}`);
-                                }
+                            if (det.provider) {
+                                Logger.info(`[${email}] 🌐 DNS provider for ${recordName}: ${det.provider.toUpperCase()}${det.zoneName ? ` (zone: ${det.zoneName})` : ''}${det.freeDomain ? ' (Dynu free domain)' : ''}`);
+                            } else {
+                                Logger.info(`[${email}] 🌐 No DNS provider detected for ${recordName} — DNS auto-verification will be skipped`);
                             }
-                        } catch (hostErr: any) {
-                            Logger.warn(`⚠️ Dynu host ensure failed: ${hostErr.message}`);
+                        } catch (detErr: any) {
+                            Logger.warn(`[${email}] ⚠️ DNS provider detection failed: ${detErr.message}`);
                         }
 
-                        Logger.info(`📡 Adding TXT to DNS provider for name="${recordName}"...`);
+                        Logger.info(`[${email}] 📡 Adding TXT to DNS provider for name="${recordName}"...`);
                         const addResult = await upsertDnsTxt(recordName, cleanedTxtRecord, dnsConfig, dnsLog);
 
                         if (addResult.success) {

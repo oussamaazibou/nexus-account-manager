@@ -95,13 +95,23 @@ async function getSecretKeyFromSSH(email) {
             reject(new Error(`SSH connection error: ${err.message}`));
         });
 
+        // Hard timeout so a stalled/unreachable SSH host can never hang the
+        // calling job forever (e.g. the [Auto-OTP] stage of gcloud browser OAuth).
+        const sshTimer = setTimeout(() => {
+            conn.end();
+            reject(new Error('SSH connection timed out while fetching OTP secret key'));
+        }, 25000);
+        conn.on('close', () => clearTimeout(sshTimer));
+        conn.on('ready', () => clearTimeout(sshTimer));
+
         // Connect to SSH server
         require('dotenv').config();
         conn.connect({
             host: process.env.SSH_HOST || '46.224.9.127',
             port: parseInt(process.env.SSH_PORT) || 22,
             username: process.env.SSH_USER || 'root',
-            password: process.env.SSH_PASSWORD || 'JnsQ3G98JU027QP'
+            password: process.env.SSH_PASSWORD || 'JnsQ3G98JU027QP',
+            readyTimeout: 20000
         });
     });
 }

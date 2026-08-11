@@ -1,4 +1,5 @@
 
+import axios from 'axios';
 import CloudflareService from './cloudflareService.js';
 import DynuService from './dynuService.js';
 
@@ -60,6 +61,23 @@ export async function detectDnsProvider(domain, config = {}) {
                     dynu: { service: dynu }
                 };
             }
+            // Registered domains whose DNS is hosted on Dynu: the zone is not in
+            // the account yet, so nothing matches above. Detect ownership from the
+            // domain's authoritative nameservers instead (ns1-5.dynu.com/net).
+            const apex = parts.slice(-2).join('.');
+            const node = parts.slice(0, -2).join('.');
+            let nsHosts = await getAuthoritativeNs(lower);
+            if (!nsHosts.length) nsHosts = await getAuthoritativeNs(apex);
+            if (nsHosts.some(ns => /^ns\d*\.dynu\.(com|net)$/i.test(ns))) {
+                return {
+                    provider: 'dynu',
+                    zoneId: null,
+                    zoneName: apex,
+                    node,
+                    freeDomain: false,
+                    dynu: { service: dynu }
+                };
+            }
         } catch (e) {
             console.warn(`[DNS] Dynu detection error: ${e.message}`);
         }
@@ -68,21 +86,40 @@ export async function detectDnsProvider(domain, config = {}) {
     return { provider: null };
 }
 
-// Dynu free dynamic-DNS domains (dynu.net, dynuddns.net, ...) have no apex
-// zone in the account until the host is created, so before any record can be
-// placed the Dynamic DNS host must exist. `det` comes from detectDnsProvider,
-// which flags these with freeDomain:true (zoneId null). Returns true when the
-// host is (or already was) ready.
-async function ensureDynuHost(det, domain, log) {
+// Resolve the authoritative nameservers of a domain via the public DNS-over-
+// HTTPS endpoint (dns.google). Returns lower-cased hostnames (e.g. ns1.dynu.com).
+async function getAuthoritativeNs(domain) {
+    try {
+        const resp = await axios.get('https://dns.google/resolve', {
+            params: { name: domain, type: 'NS' },
+            timeout: 8000
+        });
+        const answers = resp.data && resp.data.Answer;
+        if (!Array.isArray(answers)) return [];
+        return answers.map(a => String(a.data || '').toLowerCase().replace(/\.$/, '')).filter(Boolean);
+    } catch (e) {
+        return [];
+    }
+}
+
+// Domains hosted on Dynu have no zone in the account until it exists:
+//  - free dynamic-DNS domains (dynu.net, ...) need the Dynamic DNS host created,
+//  - registered domains on Dynu nameservers (NS-detected, zoneId null) need the
+//    apex zone created.
+// `det` comes from detectDnsProvider. `hostname` is the name to create (the full
+// domain for free domains, the apex zone for registered ones). Returns true when
+// the zone/host is (or already was) ready.
+async function ensureDynuHost(det, hostname, log, domain) {
     const dynu = det.dynu && det.dynu.service;
     if (!dynu) return false;
-    log(`[DNS] Dynu ${det.freeDomain ? 'free domain' : 'host not found'} for ${domain} — creating Dynamic DNS host first…`);
-    const hostRes = await dynu.ensureHost(domain);
+    const kind = det.freeDomain ? 'Dynamic DNS host' : `Dynu zone "${hostname}"`;
+    log(`[DNS] ${domain} is on Dynu but the ${kind} is not in the account — creating it first…`);
+    const hostRes = await dynu.ensureHost(hostname);
     if (!hostRes.success) {
-        log(`[DNS] Could not create Dynu host for ${domain}: ${hostRes.error}`);
+        log(`[DNS] Could not create Dynu ${kind} for ${hostname}: ${hostRes.error}`);
         return false;
     }
-    log(`[DNS] Dynamic DNS host ready for ${domain}${hostRes.already ? ' (already existed)' : ''}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
+    log(`[DNS] Dynu ${kind} ready for ${hostname}${hostRes.already ? ' (already existed)' : ''}${hostRes.zoneId ? ` [zoneId=${hostRes.zoneId}]` : ''}`);
     return true;
 }
 
@@ -91,7 +128,9 @@ async function ensureDynuHost(det, domain, log) {
 export async function upsertDnsTxt(domain, token, config = {}, log = () => {}) {
     const det = await detectDnsProvider(domain, config);
     if (!det.provider) {
-        log(`[DNS] No Cloudflare or Dynu zone found for ${domain}`);
+        const cfOk = !!(config.cloudflareEmail || '').trim() && !!(config.cloudflareKey || '').trim();
+        const dynuOk = !!(config.dynuApiKey || '').trim();
+        log(`[DNS] No DNS provider found for ${domain} (Cloudflare ${cfOk ? 'configured' : 'not configured'} · Dynu ${dynuOk ? 'configured' : 'NOT configured — add your Dynu API key in Settings → Dynu'})`);
         return { success: false, error: `No DNS provider found for ${domain}` };
     }
 
@@ -100,12 +139,13 @@ export async function upsertDnsTxt(domain, token, config = {}, log = () => {}) {
         return { ...res, provider: 'cloudflare' };
     }
 
-    // Dynu: when the host does not exist yet (free dynamic-DNS domain), create
-    // the Dynamic DNS host before adding the TXT record. This makes the whole
-    // verify flow Dynu-aware: host → record → verify.
+    // Dynu: when the zone does not exist yet (free dynamic-DNS domain or an
+    // NS-detected registered domain), create the zone/host before adding the
+    // TXT record. This makes the whole verify flow Dynu-aware: host → record → verify.
     if (det.freeDomain || det.zoneId == null) {
-        const ok = await ensureDynuHost(det, domain, log);
-        if (!ok) return { success: false, error: `Could not create Dynu dynamic-DNS host for ${domain}` };
+        const hostname = det.freeDomain ? domain : det.zoneName;
+        const ok = await ensureDynuHost(det, hostname, log, domain);
+        if (!ok) return { success: false, error: `Could not create Dynu zone for ${domain}` };
     }
 
     const res = await det.dynu.service.upsertTxt(domain, token);
@@ -117,7 +157,9 @@ export async function upsertDnsTxt(domain, token, config = {}, log = () => {}) {
 export async function upsertDnsMx(domain, config = {}, log = () => {}) {
     const det = await detectDnsProvider(domain, config);
     if (!det.provider) {
-        log(`[DNS] No Cloudflare or Dynu zone found for ${domain}`);
+        const cfOk = !!(config.cloudflareEmail || '').trim() && !!(config.cloudflareKey || '').trim();
+        const dynuOk = !!(config.dynuApiKey || '').trim();
+        log(`[DNS] No DNS provider found for ${domain} (Cloudflare ${cfOk ? 'configured' : 'not configured'} · Dynu ${dynuOk ? 'configured' : 'NOT configured — add your Dynu API key in Settings → Dynu'})`);
         return { success: false, error: `No DNS provider found for ${domain}` };
     }
 
@@ -126,10 +168,11 @@ export async function upsertDnsMx(domain, config = {}, log = () => {}) {
         return { ...res, provider: 'cloudflare' };
     }
 
-    // Same Dynu host-first handling as upsertDnsTxt.
+    // Same Dynu zone-first handling as upsertDnsTxt.
     if (det.freeDomain || det.zoneId == null) {
-        const ok = await ensureDynuHost(det, domain, log);
-        if (!ok) return { success: false, error: `Could not create Dynu dynamic-DNS host for ${domain}` };
+        const hostname = det.freeDomain ? domain : det.zoneName;
+        const ok = await ensureDynuHost(det, hostname, log, domain);
+        if (!ok) return { success: false, error: `Could not create Dynu zone for ${domain}` };
     }
 
     const res = await det.dynu.service.upsertMx(domain, 'SMTP.GOOGLE.COM', 1);
