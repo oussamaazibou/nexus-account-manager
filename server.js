@@ -35,8 +35,8 @@ const pushLog = (email, level, msg) => {
 };
 
 // ── Dynu Domains activity log buffer ─────────────────────────────────────────
-const dynuLogBuffer = [];      // last 300 lines of Dynu operations
-const MAX_DYNU_LOGS = 300;
+const dynuLogBuffer = [];      // last 1000 lines of Dynu operations
+const MAX_DYNU_LOGS = 1000;
 const dynuLog = (level, msg) => {
     dynuLogBuffer.push({ ts: new Date().toISOString(), level, msg });
     if (dynuLogBuffer.length > MAX_DYNU_LOGS) dynuLogBuffer.shift();
@@ -3241,6 +3241,7 @@ async function runBulkUserJob() {
             const msg = args.map(a => (a instanceof Error ? (a.stack || a.message) : typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
             this.buf.push({ ts: new Date().toISOString(), level, msg });
             if (this.buf.length > 300) this.buf.shift();
+            dynuLog(level, '👥 ' + msg);
             console.log(`[${this.acc.email}] [${level}] ${msg}`);
         }
     }
@@ -3299,14 +3300,12 @@ async function runBulkUserJob() {
                     acc.error = null;
                     bulkUserJob.ok++;
                     dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ✅ ${acc.email} — ${creator.usersCreated} users created`);
-                    for (const l of logger.buf.slice(-10)) dynuLog('INFO', `👥 [${idx + 1}] ${l.msg}`);
                 } else {
                     acc.status = 'failed';
                     const lastIssue = [...logger.buf].reverse().find(l => l.level === 'ERROR' || l.level === 'WARN');
                     acc.error = lastIssue ? lastIssue.msg.replace(/^.*?\] [ ]?/, '') : 'login or user creation failed';
                     bulkUserJob.failed++;
                     dynuLog('ERROR', `👥 [${idx + 1}/${accounts.length}] ❌ ${acc.email} — ${acc.error}`);
-                    for (const l of logger.buf.slice(-12)) dynuLog(l.level === 'ERROR' ? 'WARN' : 'INFO', `👥 [${idx + 1}] ${l.msg}`);
                 }
             } catch (e) {
                 acc.status = 'failed';
