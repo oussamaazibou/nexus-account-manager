@@ -3229,6 +3229,22 @@ async function runBulkUserJob() {
 
     const { GoogleWorkspaceUserCreator, Logger, HeroSMSAPI } = await import('./services/bulkUserCreation.js');
 
+    // Per-thread logger: mirrors the module's Logger but also keeps a buffer we
+    // can read back to surface the real failure reason in the Dynu activity log.
+    class BulkThreadLogger extends Logger {
+        constructor(acc) {
+            super();
+            this.buf = [];
+            this.acc = acc;
+        }
+        write(level, ...args) {
+            const msg = args.map(a => (a instanceof Error ? (a.stack || a.message) : typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+            this.buf.push({ ts: new Date().toISOString(), level, msg });
+            if (this.buf.length > 300) this.buf.shift();
+            console.log(`[${this.acc.email}] [${level}] ${msg}`);
+        }
+    }
+
     // Hero-SMS provider (same key/url the rest of the app uses)
     let heroSms = null;
     let skipSms = true;
@@ -3266,7 +3282,7 @@ async function runBulkUserJob() {
             const proxy = proxyPool.length ? proxyPool[idx % proxyPool.length] : null;
             dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ▶️ ${acc.email}${acc.targetDomain ? ` -> ${acc.targetDomain}` : ''} | thread start${proxy ? ` | proxy ${proxy.host}:${proxy.port}` : ' | no proxy'}`);
             try {
-                const logger = new Logger();
+                const logger = new BulkThreadLogger(acc);
                 const creator = new GoogleWorkspaceUserCreator(acc.email, acc.password, {
                     threadId: idx + 1,
                     headless,
@@ -3285,9 +3301,11 @@ async function runBulkUserJob() {
                     dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ✅ ${acc.email} — ${creator.usersCreated} users created`);
                 } else {
                     acc.status = 'failed';
-                    acc.error = 'login or user creation failed';
+                    const lastIssue = [...logger.buf].reverse().find(l => l.level === 'ERROR' || l.level === 'WARN');
+                    acc.error = lastIssue ? lastIssue.msg.replace(/^.*?\] [ ]?/, '') : 'login or user creation failed';
                     bulkUserJob.failed++;
                     dynuLog('ERROR', `👥 [${idx + 1}/${accounts.length}] ❌ ${acc.email} — ${acc.error}`);
+                    for (const l of logger.buf.slice(-12)) dynuLog(l.level === 'ERROR' ? 'WARN' : 'INFO', `👥 [${idx + 1}] ${l.msg}`);
                 }
             } catch (e) {
                 acc.status = 'failed';
