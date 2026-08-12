@@ -149,6 +149,9 @@ const DynuDomains: React.FC = () => {
     const [logsOpen, setLogsOpen] = useState(true);
     const logScrollRef = useRef<HTMLDivElement>(null);
 
+    // Stored base domains list
+    const [basesOpen, setBasesOpen] = useState(false);
+
     // Domain manager
     const [managerDomains, setManagerDomains] = useState<DynuZone[]>([]);
     const [managerLoading, setManagerLoading] = useState(false);
@@ -906,29 +909,39 @@ const DynuDomains: React.FC = () => {
 
                     {/* Base domain list */}
                     <div className="glass-card p-5 space-y-3">
-                        <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Stored Base Domains</h3>
-                        {store.baseDomains.length === 0 && (
-                            <p className="text-[11px] text-[var(--text-muted)]">No base domains yet.</p>
+                        <button className="flex items-center gap-2 w-full text-left" onClick={() => setBasesOpen(o => !o)}>
+                            <svg className={`transition-transform ${basesOpen ? 'rotate-90' : ''}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6" /></svg>
+                            <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Stored Base Domains</h3>
+                            {store.baseDomains.length > 0 && (
+                                <span className="text-[10px] px-2 py-0.5 rounded font-black uppercase bg-white/5 text-[var(--text-muted)]">{store.baseDomains.length}</span>
+                            )}
+                        </button>
+                        {basesOpen && (
+                            <>
+                                {store.baseDomains.length === 0 && (
+                                    <p className="text-[11px] text-[var(--text-muted)]">No base domains yet.</p>
+                                )}
+                                {store.baseDomains.map(d => (
+                                    <div key={d} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/3 border border-white/5">
+                                        <span className="flex-1 text-sm font-mono text-[var(--text-main)]">{d}</span>
+                                        <button
+                                            onClick={() => provision(d)}
+                                            disabled={provisioning === d || !selectedEmail}
+                                            className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[11px] transition-all disabled:opacity-50"
+                                        >
+                                            {provisioning === d ? <Spinner size={12} /> : 'Provision'}
+                                        </button>
+                                        <button
+                                            onClick={() => removeBaseDomain(d)}
+                                            disabled={removingBase === d}
+                                            className="px-2.5 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 font-black text-[11px] transition-all disabled:opacity-50"
+                                        >
+                                            {removingBase === d ? <Spinner size={12} /> : '✕'}
+                                        </button>
+                                    </div>
+                                ))}
+                            </>
                         )}
-                        {store.baseDomains.map(d => (
-                            <div key={d} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/3 border border-white/5">
-                                <span className="flex-1 text-sm font-mono text-[var(--text-main)]">{d}</span>
-                                <button
-                                    onClick={() => provision(d)}
-                                    disabled={provisioning === d || !selectedEmail}
-                                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[11px] transition-all disabled:opacity-50"
-                                >
-                                    {provisioning === d ? <Spinner size={12} /> : 'Provision'}
-                                </button>
-                                <button
-                                    onClick={() => removeBaseDomain(d)}
-                                    disabled={removingBase === d}
-                                    className="px-2.5 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400 font-black text-[11px] transition-all disabled:opacity-50"
-                                >
-                                    {removingBase === d ? <Spinner size={12} /> : '✕'}
-                                </button>
-                            </div>
-                        ))}
                     </div>
                 </div>
 
