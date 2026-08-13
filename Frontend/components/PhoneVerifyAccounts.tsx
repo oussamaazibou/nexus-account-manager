@@ -17,6 +17,7 @@ const BATCH_SIZE = 20;
 const GEO_OPTIONS = [
     { code: 'ID', label: 'Indonesia', flag: '🇮🇩' },
     { code: 'CO', label: 'Colombia',  flag: '🇨🇴' },
+    { code: 'ROTATE', label: 'Rotate CO ↔ ID', flag: '🔄' },
     { code: 'RU', label: 'Russia',    flag: '🇷🇺' },
     { code: 'US', label: 'USA',       flag: '🇺🇸' },
     { code: 'IN', label: 'India',     flag: '🇮🇳' },
@@ -71,6 +72,13 @@ const PhoneVerifyAccounts: React.FC = () => {
     const bulkCancelRef = useRef(false);
     const [bulkGeo, setBulkGeo] = useState('ID');
 
+    // Default bulk GEO from the server setting (set from the List Accounts floating bar)
+    useEffect(() => {
+        fetch(`${API_URL}/settings/sms-geo`).then(r => r.json()).then(d => {
+            if (d && d.smsGeo) setBulkGeo(d.smsGeo);
+        }).catch(() => {});
+    }, []);
+
     // ── Fetch ──────────────────────────────────────────────────────────────────
     const fetchAccounts = useCallback(async () => {
         try {
@@ -121,7 +129,7 @@ const PhoneVerifyAccounts: React.FC = () => {
 
     // ── Core verify logic: Gmail login → Hero SMS → 3-attempt retry ────────────
     const startVerify = useCallback(async (acc: PhoneAccount): Promise<boolean> => {
-        const geo = geoMap[acc.id] || 'ID';
+        const geo = geoMap[acc.id] || bulkGeo;
         stopPoll(acc.id);
 
         // Step 1 – Launching browser & logging in
@@ -240,7 +248,7 @@ const PhoneVerifyAccounts: React.FC = () => {
         setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, status: 'failed' } : a));
         fetch(`${API_URL}/phone-verify/close-session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: acc.email, status: 'failed' }) }).catch(() => {});
         return false;
-    }, [geoMap]);
+    }, [geoMap, bulkGeo]);
 
     // ── Remove ─────────────────────────────────────────────────────────────────
     const removeAccount = async (acc: PhoneAccount) => {
@@ -562,7 +570,7 @@ const PhoneVerifyAccounts: React.FC = () => {
                                 const vs = verifyState[acc.id];
                                 const step = vs?.step ?? 0;
                                 const sl = stepLabel(step, vs?.attempt);
-                                const geo = geoMap[acc.id] || 'ID';
+                                const geo = geoMap[acc.id] || bulkGeo;
                                 const isRunning = step >= 1 && acc.status !== 'done' && acc.status !== 'failed' && acc.status !== 'account_not_found';
 
                                 return (

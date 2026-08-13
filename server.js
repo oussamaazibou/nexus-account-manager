@@ -1851,8 +1851,8 @@ const readConfig = () => {
 };
 
 // Country IDs for Hero SMS (SMS-Activate protocol)
-// Indonesia=6, Colombia=44
-const HERO_GEO_MAP = { 'ID': 6, 'CO': 44 };
+// Indonesia=6, Colombia=33
+const HERO_GEO_MAP = { 'ID': 6, 'CO': 33 };
 
 
 
@@ -5031,7 +5031,36 @@ const getHeroConfig = () => {
         ? JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')) : {};
     return { apiKey: cfg.heroSmsKey || process.env.HERO_SMS_KEY, baseUrl: cfg.heroSmsUrl || 'https://hero-sms.com/stubs/handler_api.php' };
 };
-const GEO_COUNTRY = { ID: '6', CO: '11', US: '187', RU: '0', IN: '22', BR: '73', MX: '44' };
+const GEO_COUNTRY = { ID: '6', CO: '33', US: '187', RU: '0', IN: '22', BR: '73', MX: '44' };
+
+// ── SMS geo selection (Indonesia / Colombia / rotation) ───────────────────────
+const SMS_GEO_OPTIONS = ['ID', 'CO'];
+let smsGeoRotateIndex = 0;
+const getSmsGeoSetting = () => {
+    try {
+        const cfg = fs.existsSync(path.join(__dirname, 'config.json'))
+            ? JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')) : {};
+        return ['ID', 'CO', 'ROTATE'].includes(cfg.smsGeo) ? cfg.smsGeo : 'ID';
+    } catch { return 'ID'; }
+};
+const setSmsGeoSetting = (value) => {
+    const cfgPath = path.join(__dirname, 'config.json');
+    const cfg = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, 'utf8')) : {};
+    cfg.smsGeo = value;
+    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+};
+const resolveSmsGeo = (geo) => {
+    const g = geo || getSmsGeoSetting();
+    if (g === 'ROTATE') { const next = SMS_GEO_OPTIONS[smsGeoRotateIndex % SMS_GEO_OPTIONS.length]; smsGeoRotateIndex++; return next; }
+    return SMS_GEO_OPTIONS.includes(g) ? g : 'ID';
+};
+app.get('/api/settings/sms-geo', (req, res) => res.json({ smsGeo: getSmsGeoSetting() }));
+app.put('/api/settings/sms-geo', (req, res) => {
+    const v = String(req.body?.smsGeo || '').toUpperCase();
+    if (!['ID', 'CO', 'ROTATE'].includes(v)) return res.status(400).json({ error: 'smsGeo must be ID, CO or ROTATE' });
+    setSmsGeoSetting(v);
+    res.json({ success: true, smsGeo: v });
+});
 
 const heroGetNumber = async (apiKey, baseUrl, country) => {
     const resp = await axios.get(baseUrl, { params: { api_key: apiKey, action: 'getNumber', service: 'go', country } });
@@ -5195,8 +5224,8 @@ app.post('/api/phone-verify/start', async (req, res) => {
             return res.json({ success: false, error: loginErr.message });
         }
 
-        // Step 3: Get Hero SMS number (attempt 1)
-        const country = GEO_COUNTRY[geo] || GEO_COUNTRY['ID'];
+        // Step 3: Get Hero SMS number (attempt 1) — geo resolved from request or global setting
+        const country = GEO_COUNTRY[resolveSmsGeo(geo)] || GEO_COUNTRY['ID'];
         const sms = await heroGetNumber(apiKey, baseUrl, country);
         if (!sms.success) {
             await browser.close().catch(() => {});

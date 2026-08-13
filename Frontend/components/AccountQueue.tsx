@@ -26,6 +26,21 @@ const AccountQueue: React.FC<AccountQueueProps> = ({
   const [appUsers, setAppUsers] = useState<any[]>([]);
   const [sessionLimit, setSessionLimit] = useState<number>(6);
   const [revealedPassIds, setRevealedPassIds] = useState<Set<string>>(new Set());
+  const [smsGeo, setSmsGeo] = useState<'ID' | 'CO' | 'ROTATE'>('ID');
+
+  // Load SMS geo setting from server
+  React.useEffect(() => {
+    fetch('/api/settings/sms-geo').then(r => r.json()).then(d => {
+      if (d && d.smsGeo) setSmsGeo(d.smsGeo);
+    }).catch(() => {});
+  }, []);
+
+  const updateSmsGeo = async (v: string) => {
+    setSmsGeo(v as 'ID' | 'CO' | 'ROTATE');
+    localStorage.setItem('nexus_sms_geo', v);
+    try { await fetch('/api/settings/sms-geo', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ smsGeo: v }) }); } catch {}
+    toast(`SMS geo set to ${v === 'ROTATE' ? 'auto-rotation (Colombia ↔ Indonesia)' : v === 'CO' ? 'Colombia' : 'Indonesia'}`, 'ok');
+  };
 
   // Fetch users for assignment
   React.useEffect(() => {
@@ -460,6 +475,19 @@ const AccountQueue: React.FC<AccountQueueProps> = ({
                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.1 6.1l.94-.94a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
                   Phone Verify
                 </button>
+                {/* SMS phone-number geo selector */}
+                <div className="flex items-center gap-2 bg-indigo-900/40 border border-indigo-400/30 rounded-xl px-2.5 py-1.5" title="Phone number GEO used for SMS verification (Colombia / Indonesia / rotation)">
+                  <span className="text-[9px] font-black text-white/60 uppercase tracking-widest">SMS Geo</span>
+                  <select
+                    value={smsGeo}
+                    onChange={(e) => updateSmsGeo(e.target.value)}
+                    className="bg-transparent text-xs font-black text-white outline-none cursor-pointer appearance-none"
+                  >
+                    <option value="ID" className="bg-indigo-800">🇮🇩 Indonesia</option>
+                    <option value="CO" className="bg-indigo-800">🇨🇴 Colombia</option>
+                    <option value="ROTATE" className="bg-indigo-800">🔄 Rotate CO ↔ ID</option>
+                  </select>
+                </div>
                 <div className="flex items-center gap-1 mx-1">
                   <input
                     type="number"

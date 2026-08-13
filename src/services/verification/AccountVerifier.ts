@@ -20,6 +20,9 @@ const CAPTCHA_API_KEY = '4a8189e5ca7d59ebcd481b14387f58e4';
 const CF_EMAIL = 'abdo.charhamane@gmail.com';
 const CF_API_KEY = '541da7b4fd89331cc0abe3cf712b1786e35ce';
 
+// Module-level counter used to alternate the starting SMS geo on rotation runs.
+let phoneVerifyGeoRotate = 0;
+
 export class AccountVerifier {
     private smsService: any;
     private captchaService: any;
@@ -400,11 +403,19 @@ export class AccountVerifier {
                 throw new Error(`Phone input not found. Current URL: ${currentUrl}`);
             }
 
-            // Step 3: SMS geo-fallback (Indonesia → Colombia)
-            const geoList = [
+            // Step 3: SMS geo selection (manual or rotation between Colombia ↔ Indonesia)
+            const cfg = this.loadConfig();
+            const smsGeo = (cfg.smsGeo || '').toUpperCase();
+            const GEO_ALL = [
                 { country: '6', name: 'Indonesia' },
                 { country: '33', name: 'Colombia' }
             ];
+            const GEO_BY_CODE: Record<string, { country: string; name: string }> = { ID: GEO_ALL[0], CO: GEO_ALL[1] };
+            let geoList;
+            if (smsGeo === 'ID') geoList = [GEO_BY_CODE.ID];
+            else if (smsGeo === 'CO') geoList = [GEO_BY_CODE.CO];
+            else if (smsGeo === 'ROTATE') { geoList = [...GEO_ALL]; if (++phoneVerifyGeoRotate % 2 === 0) geoList.reverse(); }
+            else geoList = [...GEO_ALL];
             let geoIndex = 0;
             let geoFailures = 0;
             let phoneSuccess = false;
