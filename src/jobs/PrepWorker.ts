@@ -33,11 +33,11 @@ export class PrepWorker {
             const configPath = path.join(process.cwd(), 'config.json');
             if (fs.existsSync(configPath)) {
                 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-                const val = parseInt(config.concurrency || '1');
-                return Math.max(1, Math.min(10, val));
+                const val = parseInt(config.concurrency || '18');
+                return Math.max(1, Math.min(18, val));
             }
         } catch (e) { }
-        return 1;
+        return 18;
     }
 
     constructor(redisConnection: any) {

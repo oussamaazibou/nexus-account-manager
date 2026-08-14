@@ -156,6 +156,167 @@ const sendTelegramMessage = async (token, chatId, message) => {
     }
 };
 
+// ── Telegram Bot (inbound commands + hourly List Accounts status) ───────────
+const getTelegramConfig = () => {
+    try {
+        const configPath = path.join(__dirname, 'config.json');
+        if (fs.existsSync(configPath)) {
+            const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            return { token: cfg.telegramToken, chatId: cfg.telegramChatId };
+        }
+    } catch (e) { }
+    return { token: null, chatId: null };
+};
+
+const telegramApi = async (token, method, params = {}) => {
+    const url = `https://api.telegram.org/bot${token}/${method}`;
+    const resp = await axios.post(url, params, { timeout: 30000 });
+    return resp.data;
+};
+
+const buildListAccountsStatus = async () => {
+    const accountsPath = path.join(__dirname, 'accounts.txt');
+    const lines = fs.existsSync(accountsPath)
+        ? fs.readFileSync(accountsPath, 'utf8').split('\n').filter(l => l.trim().length > 0)
+        : [];
+    const metadata = getMetadata();
+    const jobs = await prepQueue.getJobs(['waiting', 'active', 'completed', 'failed'], 0, 2000);
+
+    let pending = 0, active = 0, failed = 0, completed = 0, other = 0;
+    for (const line of lines) {
+        const email = line.trim().split(':')[0];
+        let status = 'pending';
+        const relatedJob = jobs.find(j => j.data && j.data.userEmail === email);
+        if (relatedJob) {
+            try {
+                const jobState = await relatedJob.getState() || 'pending';
+                status = jobState === 'completed' ? 'pending' : jobState;
+            } catch (e) { }
+        }
+        const metaStatus = metadata[email] && metadata[email].status;
+        if (metaStatus === 'ACCOUNT_NOT_FOUND' || metaStatus === 'NO_ACTIVE') status = metaStatus;
+
+        if (status === 'active') active++;
+        else if (status === 'failed') failed++;
+        else if (status === 'completed') completed++;
+        else if (status === 'waiting' || status === 'delayed' || status === 'pending') pending++;
+        else other++;
+    }
+
+    const resultCount = getResultCount();
+    return '📋 *List Accounts Status*\n\n' +
+        `🟡 In Queue: *${pending}*\n` +
+        `🟢 Processing: *${active}*\n` +
+        `🔴 Failed: *${failed}*\n` +
+        `✅ Completed: *${completed}*\n` +
+        `⚠️ No Active/Not Found: *${other}*\n\n` +
+        `📈 Verified (Result): *${resultCount}*\n` +
+        `🕐 ${new Date().toLocaleString()}`;
+};
+
+const enqueueAllQueueAccounts = async () => {
+    const accountsPath = path.join(__dirname, 'accounts.txt');
+    if (!fs.existsSync(accountsPath)) return 0;
+
+    const lines = fs.readFileSync(accountsPath, 'utf8').split('\n').map(l => l.trim()).filter(Boolean);
+    const metadata = getMetadata();
+    let queued = 0;
+
+    for (const line of lines) {
+        const parts = line.split(':');
+        const email = parts[0] ? parts[0].trim() : '';
+        const password = parts.slice(1).join(':').trim();
+        if (!email || !password) continue;
+
+        const domain = email.split('@')[1];
+        const domainPrefix = domain.split('.')[0].replace(/[^a-z0-9]/gi, '-').toLowerCase().substring(0, 12);
+        const projectId = `${domainPrefix}-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substr(2, 3)}`.substring(0, 30).replace(/-+$/, '');
+
+        await prepQueue.add('prep-job', {
+            projectId,
+            userEmail: email,
+            userPassword: password,
+            saName: 'automation-sa'
+        }, {
+            attempts: 3,
+            backoff: {
+                type: 'exponential',
+                delay: 10000
+            },
+            removeOnComplete: true,
+            removeOnFail: false
+        });
+
+        if (!metadata[email]) metadata[email] = {};
+        if (!metadata[email].createdAt) metadata[email].createdAt = new Date().toISOString();
+        if (!metadata[email].verifiedBy) metadata[email].verifiedBy = 'telegram';
+        queued++;
+    }
+    saveMetadata(metadata);
+    return queued;
+};
+
+let telegramBotOffset = 0;
+
+const startTelegramBot = async () => {
+    const { token, chatId } = getTelegramConfig();
+    if (!token || !chatId) {
+        console.log('🤖 Telegram bot disabled (no telegramToken/telegramChatId in config.json).');
+        return;
+    }
+
+    try {
+        const me = await telegramApi(token, 'getMe');
+        console.log(`🤖 Telegram bot polling as @${me.result.username} — commands: /start, /status`);
+    } catch (e) {
+        console.error('🤖 Telegram getMe failed:', e.response?.data || e.message);
+        return;
+    }
+
+    const poll = async () => {
+        try {
+            const data = await telegramApi(token, 'getUpdates', {
+                offset: telegramBotOffset,
+                timeout: 30,
+                allowed_updates: ['message']
+            });
+
+            if (data && data.ok && Array.isArray(data.result)) {
+                for (const update of data.result) {
+                    telegramBotOffset = update.update_id + 1;
+                    const msg = update.message;
+                    if (!msg || !msg.text) continue;
+                    if (String(msg.chat.id) !== String(chatId)) continue;
+
+                    const cmd = msg.text.trim().toLowerCase();
+                    if (cmd === '/start' || cmd === 'start' || cmd === 'run setup' || cmd === 'setup') {
+                        await sendTelegramMessage(token, chatId, '⚙️ Running SETUP for all accounts in List Accounts...');
+                        try {
+                            const queued = await enqueueAllQueueAccounts();
+                            startWorker();
+                            await sendTelegramMessage(token, chatId, `✅ Queued *${queued}* account(s) into the SETUP queue.\n\nProgress is shown in the next hourly status.`);
+                        } catch (err) {
+                            console.error('[TelegramBot] SETUP failed:', err.message);
+                            await sendTelegramMessage(token, chatId, `❌ SETUP trigger failed: ${err.message}`);
+                        }
+                    } else if (cmd === '/status' || cmd === 'status') {
+                        const statusMsg = await buildListAccountsStatus();
+                        await sendTelegramMessage(token, chatId, statusMsg);
+                    }
+                }
+            }
+        } catch (e) {
+            if (e.response && e.response.status === 409) {
+                console.error('[TelegramBot] getUpdates conflict 409 — another process is polling this bot. Retrying...');
+            } else {
+                console.error('[TelegramBot] Poll error:', e.response?.data || e.message);
+            }
+        }
+        setTimeout(poll, 1500);
+    };
+    poll();
+};
+
 // ... (getResultCount unchanged)
 
 // ... (endpoint)
@@ -2243,6 +2404,33 @@ const server = app.listen(PORT, async () => {
             console.error('[Scheduler] Error:', e.message);
         }
     }, 5 * 60 * 1000); // Check every 5 minutes
+
+    // Telegram bot — inbound commands (/start = run SETUP for List Accounts, /status)
+    startTelegramBot();
+
+    // Hourly List Accounts status → Telegram
+    setInterval(async () => {
+        const { token, chatId } = getTelegramConfig();
+        if (!token || !chatId) return;
+        try {
+            await sendTelegramMessage(token, chatId, await buildListAccountsStatus());
+            console.log('[HourlyStatus] List Accounts status sent to Telegram.');
+        } catch (e) {
+            console.error('[HourlyStatus] Error:', e.message);
+        }
+    }, 60 * 60 * 1000); // Every 1 hour
+
+    // Send the first status shortly after boot so the bot can be confirmed working
+    setTimeout(async () => {
+        const { token, chatId } = getTelegramConfig();
+        if (!token || !chatId) return;
+        try {
+            await sendTelegramMessage(token, chatId, await buildListAccountsStatus());
+            console.log('[HourlyStatus] Initial List Accounts status sent to Telegram.');
+        } catch (e) {
+            console.error('[HourlyStatus] Initial status error:', e.message);
+        }
+    }, 5000);
 });
 
 
