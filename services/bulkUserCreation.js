@@ -1695,14 +1695,13 @@ export class GoogleWorkspaceUserCreator {
 
     #makeUsername() {
         const chars = 'abcdefghijklmnopqrstuvwxyz';
-        const len = 8;
-        let username;
-        do {
-            username = '';
-            for (let i = 0; i < len; i++) {
-                username += chars[Math.floor(Math.random() * chars.length)];
-            }
-        } while (this.usedUsernames.has(username));
+        let name = pickRandom(FIRST_NAMES).toLowerCase();
+        let username = name;
+        let suffix = '';
+        while (this.usedUsernames.has(username)) {
+            suffix += chars[Math.floor(Math.random() * chars.length)];
+            username = name + suffix;
+        }
         this.usedUsernames.add(username);
         return username;
     }
