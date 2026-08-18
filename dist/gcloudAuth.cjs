@@ -1,0 +1,377 @@
+"use strict";
+const puppeteer = require('puppeteer');
+const { spawn } = require('child_process');
+const CaptchaService = require('./services/captchaService.js').default; // Ensure this path is correct relative to gcloudAuth.cjs
+async function gcloudAuthLogin(email, password, tilingId = 1, configDir = null, headless = false) {
+    console.log(`[gcloud Auth] Authenticating ${email} (Headless: ${headless})...`);
+    // Window Tiling Logic
+    const screenWidth = 1920;
+    const screenHeight = 1080;
+    const cols = 3;
+    const rows = 2;
+    const width = Math.floor(screenWidth / cols);
+    const height = Math.floor(screenHeight / rows);
+    // Calculate grid position (0-indexed)
+    const id = tilingId || 1;
+    const col = (id - 1) % cols;
+    const row = Math.floor((id - 1) / cols) % rows;
+    const x = col * width;
+    const y = row * height;
+    const UserAgent = require('user-agents'); // Added UserAgent
+    const browser = await puppeteer.launch({
+        headless: headless,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-blink-features=AutomationControlled', // Stealth
+            '--lang=en-US',
+            `--window-size=${width},${height}`,
+            `--window-position=${x},${y}`
+        ]
+    });
+    const userAgent = new UserAgent({ deviceCategory: 'desktop' });
+    const fs = require('fs');
+    const path = require('path');
+    // Load Config
+    const configPath = path.join(__dirname, 'config.json');
+    let config = {};
+    try {
+        if (fs.existsSync(configPath)) {
+            config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        }
+    }
+    catch (e) {
+        console.error('Error loading config:', e);
+    }
+    const captchaKey = config.captchaKey || '4a8189e5ca7d59ebcd481b14387f58e4'; // Fallback
+    const captchaService = new CaptchaService(captchaKey);
+    try {
+        const page = await browser.newPage();
+        await page.setUserAgent(userAgent.toString());
+        await page.setExtraHTTPHeaders({
+            'Accept-Language': 'en-US,en;q=0.9'
+        });
+        await page.setViewport({ width: 1280, height: 800 });
+        // Navigate to gcloud auth URL
+        console.log('[gcloud Auth] Opening gcloud auth page...');
+        // Start gcloud auth login process
+        const isWindows = process.platform === 'win32';
+        const gcloudPath = process.env.GCLOUD_PATH || (isWindows ? 'C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin\\gcloud.cmd' : 'gcloud');
+        const env = { ...process.env };
+        if (configDir) {
+            env.CLOUDSDK_CONFIG = configDir;
+            console.log(`[gcloud Auth] Using Isolated Config: ${configDir}`);
+        }
+        const spawnCmd = isWindows ? 'cmd.exe' : gcloudPath;
+        const spawnArgs = isWindows ? ['/c', `"${gcloudPath}"`, 'auth', 'login', '--no-launch-browser'] : ['auth', 'login', '--no-launch-browser'];
+        const authProcess = spawn(spawnCmd, spawnArgs, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            windowsVerbatimArguments: isWindows,
+            env: env
+        });
+        let authUrl = '';
+        let stdoutBuffer = '';
+        let stderrBuffer = '';
+        // Helper to extract URL
+        const extractUrl = (text) => {
+            // Match standard Google Auth URL
+            // It usually starts with https://accounts.google.com/o/oauth2/auth
+            const urlMatch = text.match(/https:\/\/accounts\.google\.com\/o\/oauth2\/auth\?[^\s"']+/);
+            if (urlMatch)
+                return urlMatch[0];
+            // Fallback for different variations
+            const altMatch = text.match(/https:\/\/accounts\.google.com[^\s]+/);
+            if (altMatch && altMatch[0].includes('oauth2'))
+                return altMatch[0];
+            return null;
+        };
+        // Capture the auth URL from gcloud output (stdout OR stderr)
+        authProcess.stdout.on('data', (data) => {
+            const chunk = data.toString();
+            stdoutBuffer += chunk;
+            // console.log('[gcloud Auth stdout chunk]', chunk); // Too noisy
+            const url = extractUrl(stdoutBuffer);
+            if (url && !authUrl) {
+                authUrl = url;
+                console.log('[gcloud Auth] Captured URL from stdout');
+            }
+        });
+        authProcess.stderr.on('data', (data) => {
+            const chunk = data.toString();
+            stderrBuffer += chunk;
+            console.log('[gcloud Auth stderr chunk]', chunk);
+            const url = extractUrl(stderrBuffer);
+            if (url && !authUrl) {
+                authUrl = url;
+                console.log('[gcloud Auth] Captured URL from stderr');
+            }
+        });
+        // Wait for URL to be captured
+        console.log('[gcloud Auth] Waiting for Auth URL...');
+        for (let i = 0; i < 60; i++) { // Wait up to 30 seconds
+            if (authUrl)
+                break;
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        if (!authUrl) {
+            console.log('[gcloud Auth] FULL STDERR DUMP:', stderrBuffer);
+            throw new Error('Could not capture gcloud auth URL from stdout or stderr');
+        }
+        console.log(`[gcloud Auth] Navigating to: ${authUrl}`);
+        // Force English for consistent UI selectors
+        if (authUrl.includes('?')) {
+            authUrl += '&hl=en';
+        }
+        else {
+            authUrl += '?hl=en';
+        }
+        await page.goto(authUrl, { waitUntil: 'networkidle2' });
+        // Login flow
+        // Check if we need to enter Email first
+        // Some flows ask for Email -> Next -> Password
+        // Others ask for Password directly (if session remembered)
+        try {
+            // Wait up to 5s for email input. If not found, assume we are on password screen.
+            const emailInput = await page.waitForSelector('input[type="email"]', { visible: true, timeout: 5000 });
+            if (emailInput) {
+                console.log('[gcloud Auth] Found Email input, entering email...');
+                await page.type('input[type="email"]', email);
+                await page.click('#identifierNext');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+        catch (e) {
+            // Email input not found
+            console.log('[gcloud Auth] No Email input found (or timed out), checking for Password screen...');
+        }
+        // Password / CAPTCHA Handling with Retry
+        let captchaAttempts = 0;
+        const maxCaptchaAttempts = 3;
+        let isCaptchaResolved = false;
+        while (!isCaptchaResolved && captchaAttempts < maxCaptchaAttempts) {
+            captchaAttempts++;
+            console.log(`[gcloud Auth] Waiting for Password or CAPTCHA (Attempt ${captchaAttempts})...`);
+            try {
+                const result = await Promise.race([
+                    page.waitForSelector('input[type="password"]', { visible: true, timeout: 30000 }).then(() => 'password'),
+                    page.waitForSelector('#captchaimg', { visible: true, timeout: 30000 }).then(() => 'captcha'),
+                    page.waitForSelector('input[name="ca"]', { visible: true, timeout: 30000 }).then(() => 'captcha'),
+                    // Also check for "Type the text you hear or see" label
+                    page.waitForSelector('input[aria-label="Type the text you hear or see"]', { visible: true, timeout: 30000 }).then(() => 'captcha')
+                ]).catch(() => 'timeout');
+                if (result === 'password') {
+                    console.log('[gcloud Auth] Password field detected!');
+                    isCaptchaResolved = true;
+                    break;
+                }
+                if (result === 'captcha') {
+                    console.log(`[gcloud Auth] ⚠️ CAPTCHA detected!`);
+                    const captchaImageSelector = '#captchaimg';
+                    const captchaInputSelector = 'input[name="ca"], input[aria-label="Type the text you hear or see"]';
+                    const captchaInput = await page.$(captchaInputSelector);
+                    const captchaImg = await page.$(captchaImageSelector) ||
+                        await page.$('div#captcha-box img') ||
+                        await page.$('img[src*="captcha"]');
+                    if (captchaInput && captchaImg) {
+                        // Ensure image is loaded
+                        await new Promise(r => setTimeout(r, 1000));
+                        const isVisible = await captchaImg.boundingBox();
+                        if (isVisible) {
+                            console.log(`[gcloud Auth] 📸 Capturing captcha image...`);
+                            const base64Image = await captchaImg.screenshot({ encoding: 'base64' });
+                            const solution = await captchaService.solveImageCaptcha(base64Image);
+                            if (solution.success) {
+                                console.log(`[gcloud Auth] ✅ Captcha solved: ${solution.solution}`);
+                                // Clear input if retry
+                                await captchaInput.click({ clickCount: 3 });
+                                await page.keyboard.press('Backspace');
+                                // Type solution
+                                for (const char of solution.solution) {
+                                    await captchaInput.type(char, { delay: Math.random() * 100 + 50 });
+                                }
+                                await page.keyboard.press('Enter');
+                                // Wait for navigation or error reload
+                                await new Promise(r => setTimeout(r, 4000));
+                                // Check if we advanced or are still on captcha
+                                const stillCaptcha = await page.$('#captchaimg');
+                                const errorMsg = await page.evaluate(() => {
+                                    const body = document.body.innerText;
+                                    return body.includes('Type the text you hear or see') ||
+                                        body.includes('did not match') ||
+                                        body.includes('wrong');
+                                });
+                                if (!stillCaptcha && !errorMsg) {
+                                    console.log('[gcloud Auth] ✅ Captcha seemingly accepted.');
+                                    isCaptchaResolved = true;
+                                }
+                                else {
+                                    console.log('[gcloud Auth] ❌ Captcha rejected or new one appeared. Retrying...');
+                                }
+                            }
+                            else {
+                                console.error(`[gcloud Auth] Captcha solving failed: ${solution.error}`);
+                            }
+                        }
+                    }
+                }
+                else if (result === 'timeout') {
+                    console.log('[gcloud Auth] Timeout waiting for Password or CAPTCHA.');
+                    // Take screenshot for debugging
+                    // disabled screenshot);
+                    // If last attempt, verify we aren't just stuck
+                    if (captchaAttempts === maxCaptchaAttempts) {
+                        throw new Error('Timeout waiting for Password/CAPTCHA');
+                    }
+                }
+            }
+            catch (e) {
+                console.log(`[gcloud Auth] Error in loop: ${e.message}`);
+            }
+        }
+        // Final password entry (if resolved)
+        if (isCaptchaResolved) {
+            // In case we broke out of loop on "password" detection, we need to enter it now.
+            // Or if captcha was solved and we moved TO password page.
+            // Let's ensure we are on password page now.
+            try {
+                await page.waitForSelector('input[type="password"]', { visible: true, timeout: 10000 });
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Slight delay
+                await page.type('input[type="password"]', password);
+                await page.click('#passwordNext');
+            }
+            catch (pwErr) {
+                console.log('[gcloud Auth] Could not find password field even after resolving/skipping captcha.');
+                throw pwErr;
+            }
+            // AUTO-OTP: Check if OTP is requested and handle automatically
+            console.log('[gcloud Auth] Checking for OTP request...');
+            const { handleOTPIfRequested } = require('./autoOTPHandler.cjs');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            await handleOTPIfRequested(page, email, 10000);
+        }
+        else {
+            throw new Error('Failed to resolve Login/CAPTCHA flow.');
+        }
+        // POLLING LOOP: Click Allow/Continue until we find the code (4/...)
+        console.log('[gcloud Auth] Entering polling loop for Allow button and Code...');
+        let verificationCode = '';
+        const maxPollAttempts = 60; // Increased to 60 (120s)
+        const getVerificationCode = async () => {
+            return await page.evaluate(() => {
+                const codeRegex = /^4\/[0-9a-zA-Z_-]{20,}/;
+                // 1. Textareas (often used for copy paste)
+                const textareas = Array.from(document.querySelectorAll('textarea'));
+                for (const t of textareas) {
+                    if (t.value && codeRegex.test(t.value))
+                        return t.value;
+                }
+                // 2. Code/Samp/Pre/Kbd tags (or .kHXSqf class)
+                // We must check ALL of them, not just the first one.
+                const codeElements = Array.from(document.querySelectorAll('code, samp, pre, kbd, .kHXSqf'));
+                for (const el of codeElements) {
+                    const text = el.innerText || el.textContent || '';
+                    if (codeRegex.test(text.trim()))
+                        return text.trim();
+                }
+                // 3. Copy button parent context
+                const copyBtns = Array.from(document.querySelectorAll('button[aria-label^="Copy"]'));
+                for (const btn of copyBtns) {
+                    if (btn.parentElement) {
+                        const text = btn.parentElement.innerText;
+                        const match = text.match(/4\/[0-9a-zA-Z_-]{20,}/);
+                        if (match)
+                            return match[0];
+                    }
+                }
+                // 4. Search body for pattern "4/..." as fallback
+                const bodyText = document.body.innerText;
+                const match = bodyText.match(/4\/[0-9a-zA-Z_-]{20,}/);
+                return match ? match[0] : '';
+            });
+        };
+        for (let i = 0; i < maxPollAttempts; i++) {
+            // 1. Check if Code is already visible
+            try {
+                verificationCode = await getVerificationCode();
+            }
+            catch (e) { }
+            if (verificationCode) {
+                console.log(`[gcloud Auth] FOUND CODE: ${verificationCode.substring(0, 10)}... (Valid Format)`);
+                break;
+            }
+            // 2. If no code, look for Allow/Continue button and click it
+            try {
+                const clicked = await page.evaluate(() => {
+                    const buttons = Array.from(document.querySelectorAll('button, span[role="button"]'));
+                    // Check for Allow/Continue/Trust/Autoriser
+                    const actionBtn = buttons.find(btn => {
+                        const text = (btn.innerText || btn.textContent || '').toLowerCase();
+                        // Avoid "Cancel" or "Deny"
+                        if (text.includes('cancel') || text.includes('deny') || text.includes('annuler') || text.includes('back'))
+                            return false;
+                        return text.includes('allow') ||
+                            text.includes('continue') ||
+                            text.includes('trus') || // Trust
+                            text.includes('confir') || // Confirm
+                            text.includes('accept') ||
+                            text.includes('autoriser');
+                    });
+                    if (actionBtn) {
+                        // Check if enabled and visible
+                        if (actionBtn.offsetParent === null || actionBtn.disabled)
+                            return false;
+                        actionBtn.click();
+                        return true;
+                    }
+                    return false;
+                });
+                if (clicked) {
+                    console.log('[gcloud Auth] Clicked an Allow/Continue button...');
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+            }
+            catch (e) {
+                console.log('[gcloud Auth] Error searching for buttons:', e.message);
+            }
+            // Wait before next poll
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        if (verificationCode) {
+            console.log(`[gcloud Auth] Writing code to stdin...`);
+            authProcess.stdin.write(verificationCode + '\n');
+            authProcess.stdin.end();
+        }
+        else {
+            console.log('[gcloud Auth] No verification code found after polling.');
+            // disabled screenshot);
+            console.log('[gcloud Auth] Saved screenshot to gcloud-auth-failure.png');
+        }
+        // Wait for process to exit
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                console.log('[gcloud Auth] Process timed out');
+                reject(new Error('Auth process timed out'));
+            }, 30000); // 30s timeout after code entry
+            authProcess.on('close', (code) => {
+                clearTimeout(timeout);
+                console.log(`[gcloud Auth] Process exited with code ${code}`);
+                if (code === 0)
+                    resolve();
+                else
+                    reject(new Error(`gcloud auth exited with code ${code}`));
+            });
+            authProcess.on('error', (err) => {
+                clearTimeout(timeout);
+                reject(err);
+            });
+        });
+    }
+    catch (error) {
+        console.error('[gcloud Auth] Error:', error);
+        throw error;
+    }
+    finally {
+        await browser.close();
+    }
+}
+module.exports = { gcloudAuthLogin };
