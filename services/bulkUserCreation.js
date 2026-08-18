@@ -356,6 +356,7 @@ export class GoogleWorkspaceUserCreator {
         this.heroActivationId = null;
         this.heroPhoneInternational = null;
         this.usersCreated = 0;
+        this.usedUsernames = new Set();
     }
 
     async #delay(min = 50, max = 200) {
@@ -1504,7 +1505,7 @@ export class GoogleWorkspaceUserCreator {
         for (const row of taggedList) {
             const firstName = pickRandom(FIRST_NAMES);
             const lastName = pickRandom(LAST_NAMES);
-            const username = this.#makeUsername(firstName, lastName);
+            const username = this.#makeUsername();
             const okFirst = await fillField(row, 'first', firstName);
             await this.#delay(150, 300);
             const okLast = await fillField(row, 'last', lastName);
@@ -1692,11 +1693,18 @@ export class GoogleWorkspaceUserCreator {
         return false;
     }
 
-    #makeUsername(first, last) {
-        const clean = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
-        const base = `${clean(first) || 'user'}.${clean(last) || 'name'}`.slice(0, 20);
-        const suffix = String(1000 + Math.floor(Math.random() * 9000));
-        return `${base}${suffix}`.slice(0, 24);
+    #makeUsername() {
+        const chars = 'abcdefghijklmnopqrstuvwxyz';
+        const len = 8;
+        let username;
+        do {
+            username = '';
+            for (let i = 0; i < len; i++) {
+                username += chars[Math.floor(Math.random() * chars.length)];
+            }
+        } while (this.usedUsernames.has(username));
+        this.usedUsernames.add(username);
+        return username;
     }
 
     async #cleanup() {
