@@ -1199,33 +1199,107 @@ export class AccountVerifier {
                     };
                     // Step 1: Navigate to domain management
                     Logger.info(`🌐 Navigating to Admin Console Domains...`);
-                    await page.goto('https://admin.google.com/ac/domains/manage?hl=en', { waitUntil: 'networkidle2', timeout: 20000 }).catch(() => { });
-                    await new Promise(r => setTimeout(r, 4000));
+                    await page.goto('https://admin.google.com/ac/domains/manage?hl=en', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => { });
+                    // Wait for page content to actually render (Admin Console is a heavy SPA)
+                    await page.waitForFunction(() => {
+                        const txt = (document.body && document.body.innerText) || '';
+                        return txt.length > 50 && !/sign in|login|choose an account/i.test(txt);
+                    }, { timeout: 15000 }).catch(() => { });
+                    await new Promise(r => setTimeout(r, 5000));
                     await saveScreenshot('01_domains_page');
-                    // Step 2: Find & MOUSE-CLICK "Verify domain" — SPA link (href='#' needs real mouse click)
-                    Logger.info(`🔗 Clicking "Verify domain" with mouse.click...`);
+                    // Check if redirected to sign-in
+                    const currentUrl = page.url();
+                    if (currentUrl.includes('accounts.google.com') || currentUrl.includes('signin')) {
+                        Logger.warn(`⚠️ Redirected to sign-in — re-navigating to domains page`);
+                        await page.goto('https://admin.google.com/ac/domains/manage?hl=en', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => { });
+                        await page.waitForFunction(() => {
+                            const txt = (document.body && document.body.innerText) || '';
+                            return txt.length > 50 && !/sign in|login|choose an account/i.test(txt);
+                        }, { timeout: 15000 }).catch(() => { });
+                        await new Promise(r => setTimeout(r, 5000));
+                        await saveScreenshot('01b_domains_page_retry');
+                    }
+                    // Step 2: Find & MOUSE-CLICK "Verify domain" — try multiple selectors and text patterns
+                    Logger.info(`🔗 Looking for "Verify domain" element...`);
                     let verifyClicked = false;
-                    const allPageElements = await page.$$('a, button, span, div[role="button"]');
+                    // 2a: Try all visible text-containing elements (broader search)
+                    const textPatterns = ['verify domain', 'verify your domain', 'verify', 'start verification', 'begin verification'];
+                    const allSelectors = 'a, button, span, div[role="button"], td, li, [role="link"], [role="tab"]';
+                    const allPageElements = await page.$$(allSelectors);
                     for (const el of allPageElements) {
                         try {
                             const elText = await el.evaluate((e) => (e.innerText || e.textContent || '').trim().toLowerCase());
-                            if (elText === 'verify domain' || elText === 'verify your domain' || elText === 'verify') {
+                            if (textPatterns.some(p => elText === p || elText.startsWith(p))) {
                                 const box = await el.boundingBox();
-                                if (box && box.width > 0) {
+                                if (box && box.width > 0 && box.height > 0) {
                                     await el.evaluate((e) => e.scrollIntoView({ block: 'center' }));
                                     await new Promise(r => setTimeout(r, 400));
-                                    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-                                    Logger.info(`✅ Mouse-clicked "Verify domain" element (text='${elText}')`);
-                                    verifyClicked = true;
-                                    break;
+                                    const freshBox = await el.boundingBox();
+                                    if (freshBox) {
+                                        await page.mouse.click(freshBox.x + freshBox.width / 2, freshBox.y + freshBox.height / 2);
+                                        Logger.info(`✅ Mouse-clicked "Verify domain" element (text='${elText}')`);
+                                        verifyClicked = true;
+                                        break;
+                                    }
                                 }
                             }
                         }
                         catch (e) { /* skip */ }
                     }
+                    // 2b: If not found, try finding the domain name in the list and clicking it to get to domain details page
+                    if (!verifyClicked) {
+                        Logger.info(`🔍 Trying to find domain in list and navigate to its settings...`);
+                        const domainName = fullDomain;
+                        const listElements = await page.$$('a, td, tr, [role="row"], [role="link"]');
+                        for (const el of listElements) {
+                            try {
+                                const elText = await el.evaluate((e) => (e.innerText || e.textContent || '').trim().toLowerCase());
+                                if (elText.includes(domainName.toLowerCase())) {
+                                    const box = await el.boundingBox();
+                                    if (box && box.width > 0 && box.height > 0) {
+                                        await el.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+                                        await new Promise(r => setTimeout(r, 300));
+                                        const freshBox = await el.boundingBox();
+                                        if (freshBox) {
+                                            await page.mouse.click(freshBox.x + freshBox.width / 2, freshBox.y + freshBox.height / 2);
+                                            Logger.info(`✅ Clicked domain "${domainName}" in list`);
+                                            await new Promise(r => setTimeout(r, 4000));
+                                            await saveScreenshot('01c_domain_detail');
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch (e) { /* skip */ }
+                        }
+                        // Now look for "Verify" on the domain detail page
+                        const detailElements = await page.$$(allSelectors);
+                        for (const el of detailElements) {
+                            try {
+                                const elText = await el.evaluate((e) => (e.innerText || e.textContent || '').trim().toLowerCase());
+                                if (textPatterns.some(p => elText === p || elText.startsWith(p))) {
+                                    const box = await el.boundingBox();
+                                    if (box && box.width > 0 && box.height > 0) {
+                                        await el.evaluate((e) => e.scrollIntoView({ block: 'center' }));
+                                        await new Promise(r => setTimeout(r, 300));
+                                        const freshBox = await el.boundingBox();
+                                        if (freshBox) {
+                                            await page.mouse.click(freshBox.x + freshBox.width / 2, freshBox.y + freshBox.height / 2);
+                                            Logger.info(`✅ Mouse-clicked "Verify domain" on detail page (text='${elText}')`);
+                                            verifyClicked = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch (e) { /* skip */ }
+                        }
+                    }
+                    // 2c: Direct verify URL fallback
                     if (!verifyClicked) {
                         Logger.warn(`⚠️ No 'Verify domain' element found — trying direct verify URL`);
                         await page.goto(`https://admin.google.com/ac/domains/verify?hl=en`, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { });
+                        await new Promise(r => setTimeout(r, 4000));
                     }
                     // Poll for URL/page change after SPA click
                     const urlBeforeWizard = page.url();
@@ -3287,48 +3361,6 @@ export class AccountVerifier {
         await humanDelay(1500, 2500);
         let listOpened = false;
         let addPaymentClicked = false;
-        // Detect if the payment-options list is open/visible. Accepts role=option rows
-        // AND plain buttons whose text IS a payment method (Google renders them as buttons).
-        const isPaymentListOpen = async () => {
-            const checkFrames = await getUsableFrames();
-            for (const { frame } of checkFrames) {
-                try {
-                    const open = await safeEval(frame, () => {
-                        const isVis = (e) => { if (!e.isConnected)
-                            return false; const s = window.getComputedStyle(e); return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' && !e.hasAttribute('hidden') && e.getAttribute('aria-hidden') !== 'true' && e.getBoundingClientRect().width > 0; };
-                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                        const MARKERS = ['add credit or debit card', 'pay by upi qr code', 'pay with netbanking', 'add credit card', 'debit card', 'credit card'];
-                        // 1. role-based containment (listbox/menu/dialog/option)
-                        const els = [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="dialog"], [role="option"]')];
-                        for (const e of els) {
-                            if (!isVis(e))
-                                continue;
-                            const text = norm(e.textContent);
-                            if (MARKERS.some(m => text.includes(m)))
-                                return true;
-                        }
-                        // 2. Plain button / [role=button] whose text IS a payment method marker
-                        const btns = [...document.querySelectorAll('button, [role="button"], [role="radio"], label, [role="menuitemradio"]')];
-                        for (const b of btns) {
-                            if (!isVis(b))
-                                continue;
-                            const t = norm(b.textContent);
-                            if (MARKERS.some(m => t === m || t.startsWith(m)))
-                                return true;
-                        }
-                        // 3. Expanded "add payment method" discliner with visible options
-                        const addBtn = [...document.querySelectorAll('button, [role="button"]')].find(b => norm(b.textContent) === 'add payment method' && b.getAttribute('aria-expanded') === 'true');
-                        if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis))
-                            return true;
-                        return false;
-                    }, undefined, 2500);
-                    if (open === true)
-                        return true;
-                }
-                catch (e) { }
-            }
-            return false;
-        };
         // ── Step 1: Click "Add payment method" (VERBATIM reference walker + #getUsableFrames loop) ──
         for (let retry = 0; retry < 2 && !listOpened; retry++) {
             const framesInfo = await getUsableFrames();
@@ -3426,7 +3458,35 @@ export class AccountVerifier {
                 if (addPaymentClicked) {
                     const pollStart = Date.now();
                     while (Date.now() - pollStart < 20000 && !listOpened) {
-                        listOpened = await isPaymentListOpen();
+                        const checkFrames = await getUsableFrames();
+                        for (const { frame } of checkFrames) {
+                            try {
+                                listOpened = await safeEval(frame, () => {
+                                    const isVis = (e) => {
+                                        if (!e.isConnected)
+                                            return false;
+                                        const s = window.getComputedStyle(e);
+                                        return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' && !e.hasAttribute('hidden') && e.getAttribute('aria-hidden') !== 'true' && e.getBoundingClientRect().width > 0;
+                                    };
+                                    const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                                    const els = [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="dialog"], [role="option"]')];
+                                    for (const e of els) {
+                                        if (!isVis(e))
+                                            continue;
+                                        const text = norm(e.textContent);
+                                        if (text.includes('add credit or debit card') || text.includes('pay by upi qr code') || text.includes('pay with netbanking'))
+                                            return true;
+                                    }
+                                    const addBtn = [...document.querySelectorAll('button, [role="button"]')].find((b) => norm(b.textContent) === 'add payment method' && b.getAttribute('aria-expanded') === 'true');
+                                    if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis))
+                                        return true;
+                                    return false;
+                                }, undefined, 2500);
+                                if (listOpened)
+                                    break;
+                            }
+                            catch (e) { }
+                        }
                         if (listOpened)
                             break;
                         await new Promise(r => setTimeout(r, 250));
