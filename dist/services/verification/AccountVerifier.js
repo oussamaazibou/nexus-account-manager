@@ -3456,33 +3456,35 @@ export class AccountVerifier {
                 }
                 await clickTargetHandle.dispose().catch(() => { });
                 if (addPaymentClicked) {
-                    await new Promise(r => setTimeout(r, 1500));
                     const pollStart = Date.now();
                     while (Date.now() - pollStart < 20000 && !listOpened) {
                         const checkFrames = await getUsableFrames();
                         for (const { frame } of checkFrames) {
                             try {
-                                listOpened = await frame.evaluate(() => {
-                                    const isVis = (e) => {
-                                        if (!e.isConnected)
-                                            return false;
-                                        const s = window.getComputedStyle(e);
-                                        return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' && !e.hasAttribute('hidden') && e.getAttribute('aria-hidden') !== 'true' && e.getBoundingClientRect().width > 0;
-                                    };
-                                    const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                                    const els = [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="dialog"], [role="option"]')];
-                                    for (const e of els) {
-                                        if (!isVis(e))
-                                            continue;
-                                        const text = norm(e.textContent);
-                                        if (text.includes('add credit or debit card') || text.includes('pay by upi qr code') || text.includes('pay with netbanking'))
+                                listOpened = await Promise.race([
+                                    frame.evaluate(() => {
+                                        const isVis = (e) => {
+                                            if (!e.isConnected)
+                                                return false;
+                                            const s = window.getComputedStyle(e);
+                                            return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' && !e.hasAttribute('hidden') && e.getAttribute('aria-hidden') !== 'true' && e.getBoundingClientRect().width > 0;
+                                        };
+                                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                                        const els = [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="dialog"], [role="option"]')];
+                                        for (const e of els) {
+                                            if (!isVis(e))
+                                                continue;
+                                            const text = norm(e.textContent);
+                                            if (text.includes('add credit or debit card') || text.includes('pay by upi qr code') || text.includes('pay with netbanking'))
+                                                return true;
+                                        }
+                                        const addBtn = [...document.querySelectorAll('button, [role="button"]')].find((b) => norm(b.textContent) === 'add payment method' && b.getAttribute('aria-expanded') === 'true');
+                                        if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis))
                                             return true;
-                                    }
-                                    const addBtn = [...document.querySelectorAll('button, [role="button"]')].find((b) => norm(b.textContent) === 'add payment method' && b.getAttribute('aria-expanded') === 'true');
-                                    if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis))
-                                        return true;
-                                    return false;
-                                });
+                                        return false;
+                                    }),
+                                    new Promise(r => setTimeout(() => r(false), 3000))
+                                ]);
                                 if (listOpened)
                                     break;
                             }
@@ -3856,7 +3858,10 @@ export class AccountVerifier {
         };
         let bankSelected = false;
         let bankChosen = null;
+        let noDropdownFound = false;
         for (const bank of banks) {
+            if (noDropdownFound)
+                break;
             const frames = await getUsableFrames();
             for (const { frame, page: pageForMouse } of frames) {
                 bankSelected = await selectFromComboboxOrSelectInFrame(frame, pageForMouse, bank);
@@ -3894,7 +3899,25 @@ export class AccountVerifier {
             }
             if (bankSelected)
                 break;
-            log(`🔎 no bank match for "${bank}" — next...`);
+            if (bank === 'HDFC Bank') {
+                let hasDropdown = false;
+                for (const { frame } of frames) {
+                    try {
+                        hasDropdown = await safeEval(frame, () => {
+                            return !!document.querySelector('select, [role="combobox"], [role="listbox"]');
+                        }, undefined, 2000);
+                        if (hasDropdown)
+                            break;
+                    }
+                    catch (e) { }
+                }
+                if (!hasDropdown) {
+                    noDropdownFound = true;
+                    log(`ℹ️ No bank dropdown found in any frame — skipping remaining bank attempts`);
+                }
+            }
+            if (!noDropdownFound)
+                log(`🔎 no bank match for "${bank}" — next...`);
         }
         log(bankSelected ? `🏦 Bank selected: ${bankChosen}` : `⚠️ No bank could be auto-selected`);
         await humanDelay(1500, 2500);
