@@ -1161,17 +1161,28 @@ export class AccountVerifier {
                 Logger.info(`✅ Login/Verification Flow Complete: ${email} (at: ${finalUrl})`);
 
                 // ── CHECKOUT / TRIAL START (if landed on /checkout) ──────────────
+                // If the account landed on /checkout it means the trial was NEVER
+                // activated. Proceeding to domain verify/OTP will always fail and the
+                // account will bounce right back to /checkout. So if checkout cannot
+                // be completed, abort this job immediately with a clear error.
                 if (finalUrl.includes('/checkout')) {
                     Logger.info(`💳 Account landed on checkout page — handling trial start + address + payment...`);
+                    let checkoutOk = false;
                     try {
-                        const checkoutOk = await this.handleCheckoutWithRetry(page, email, password);
+                        checkoutOk = await this.handleCheckoutWithRetry(page, email, password);
                         if (checkoutOk) {
                             Logger.info(`✅ Checkout/trial flow completed`);
                         } else {
                             Logger.warn(`⚠️ Checkout/trial flow did not complete cleanly`);
                         }
                     } catch (checkoutErr: any) {
-                        Logger.warn(`⚠️ Checkout handling failed (non-blocking): ${checkoutErr.message}`);
+                        Logger.warn(`⚠️ Checkout handling failed: ${checkoutErr.message}`);
+                    }
+                    if (!checkoutOk) {
+                        Logger.error(`⛔ Checkout NOT completed — trial was not activated. Aborting job (account will keep bouncing back to /checkout).`);
+                        await this.saveCheckoutDebugState(page, email, 'consider_retry_later');
+                        if (browser) await browser.close().catch(() => { });
+                        return { success: false, email, password, error: 'CHECKOUT_NOT_COMPLETED: trial was not activated — retry later' };
                     }
                 }
 
@@ -2100,9 +2111,53 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
         return false;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Save checkout debug state (URL + page text + visible buttons) so the reason
+    // for a failed checkout can be diagnosed from the server.
+    // ─────────────────────────────────────────────────────────────────────────────
+    private async saveCheckoutDebugState(page: any, email: string, name: string): Promise<void> {
+        try {
+            const dir = 'debug_checkout';
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const safeEmail = email.replace(/[^a-zA-Z0-9@._-]/g, '_');
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const file = `${dir}/${name}_${safeEmail}_${stamp}.json`;
+            const state: any = {
+                name,
+                email,
+                timestamp: new Date().toISOString(),
+                url: page.url(),
+                bodyText: (await this.safeEval(page, () => document.body ? document.body.innerText : '').catch(() => '')) || '',
+                frames: []
+            };
+            for (const frame of page.frames()) {
+                try {
+                    const info = await this.safeEval(frame, () => {
+                        const isVis = (el: any) => el.isConnected && el.getBoundingClientRect().width > 0;
+                        const norm = (t: any) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        return {
+                            url: location.href,
+                            buttons: [...document.querySelectorAll('button, [role="button"], [role="option"], a')]
+                                .filter(isVis)
+                                .slice(0, 40)
+                                .map((el: any) => ({ text: String(el.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 80), role: el.getAttribute('role') }))
+                        };
+                    }, undefined, 4000);
+                    if (info) state.frames.push(info);
+                } catch (e) { }
+            }
+            try { await page.screenshot({ path: `${dir}/${name}_${safeEmail}_${stamp}.png`, fullPage: false }); } catch (e) { }
+            fs.writeFileSync(file, JSON.stringify(state, null, 2));
+            Logger.warn(`📦 Checkout debug state saved: ${file}`);
+        } catch (e: any) {
+            Logger.warn(`⚠️ Failed to save checkout debug state: ${e.message}`);
+        }
+    }
+
     private async handleCheckout(page: any, email: string = '', password: string = ''): Promise<boolean> {
-        const log = (msg: string) => Logger.info(`[Checkout] ${msg}`);
-        const warn = (msg: string) => Logger.warn(`[Checkout] ${msg}`);
+        const tag = `[Checkout] [${email}]`;
+        const log = (msg: string) => Logger.info(`${tag} ${msg}`);
+        const warn = (msg: string) => Logger.warn(`${tag} ${msg}`);
         const browser: any = page.browser();
         const rnd = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
         const humanDelay = (min: number, max: number) => new Promise<void>(r => setTimeout(r, rnd(min, max)));
@@ -2110,7 +2165,7 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
         // Heartbeat: always show live progress even if the page JS is busy.
         const heartbeat = setInterval(() => {
             try {
-                Logger.info(`[Checkout] ⏳ heartbeat — still working... URL: ${(page.url() || '').substring(0, 120)}`);
+                Logger.info(`${tag} ⏳ heartbeat — still working... URL: ${(page.url() || '').substring(0, 120)}`);
             } catch (e) { }
         }, 8000);
         const stopHeartbeat = () => clearInterval(heartbeat);
@@ -2452,8 +2507,9 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
     // Re-authenticate if Google bounced the checkout to the sign-in page.
     // ─────────────────────────────────────────────────────────────────────────────
     private async reauthForCheckout(page: any, email: string, password: string): Promise<boolean> {
-        const log = (msg: string) => Logger.info(`[Checkout] ${msg}`);
-        const warn = (msg: string) => Logger.warn(`[Checkout] ${msg}`);
+        const tag = `[Checkout] [${email}]`;
+        const log = (msg: string) => Logger.info(`${tag} ${msg}`);
+        const warn = (msg: string) => Logger.warn(`${tag} ${msg}`);
         try {
             const CHECKOUT_URL = 'https://workspace.google.com/checkout?uj=2606-checkoutentry-signup-coreflow-accountredirect';
             const loginHandoff = `https://accounts.google.com/v3/signin/identifier?Email=${encodeURIComponent(email)}&continue=${encodeURIComponent(CHECKOUT_URL)}&service=CPanel&sacu=1&skipvpage=true&flowName=GlifWebSignIn&flowEntry=ServiceLogin`;

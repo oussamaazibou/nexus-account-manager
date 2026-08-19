@@ -3,7 +3,7 @@ import { Worker, Job } from 'bullmq';
 import { GCloudRunner } from '../services/gcloud/GCloudRunner.js';
 import { S3Uploader } from '../services/aws/S3Uploader.js';
 import { SSHUploader } from '../services/ssh/SSHUploader.js';
-import { Logger } from '../utils/logger.js';
+import { Logger, withLogContext } from '../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
 import * as puppeteer from 'puppeteer'; // Verify if this causes issues or if types are needed
@@ -68,6 +68,10 @@ export class PrepWorker {
         this.verifier = new AccountVerifier();
 
         this.worker = new Worker('prep-queue', async (job: Job<PrepJobData>) => {
+            // Set the per-job log context so EVERY Logger line inside this job
+            // carries the account email → server.js routes it into the live
+            // Process Log panel for this account.
+            return withLogContext({ email: job.data.userEmail }, async () => {
             // Re-read concurrency before each job and update if changed
             const freshConcurrency = this.loadConcurrency();
             if (freshConcurrency !== this.currentConcurrency) {
@@ -85,6 +89,7 @@ export class PrepWorker {
 
             const jobDataWithId = { ...job.data, jobId: job.id };
             await this.processJob(jobDataWithId);
+            });
         }, {
             connection: redisConnection,
             concurrency: this.currentConcurrency,

@@ -3,7 +3,7 @@ import { Worker } from 'bullmq';
 import { GCloudRunner } from '../services/gcloud/GCloudRunner.js';
 import { S3Uploader } from '../services/aws/S3Uploader.js';
 import { SSHUploader } from '../services/ssh/SSHUploader.js';
-import { Logger } from '../utils/logger.js';
+import { Logger, withLogContext } from '../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
 export class PrepWorker {
@@ -46,20 +46,25 @@ export class PrepWorker {
         });
         this.verifier = new AccountVerifier();
         this.worker = new Worker('prep-queue', async (job) => {
-            // Re-read concurrency before each job and update if changed
-            const freshConcurrency = this.loadConcurrency();
-            if (freshConcurrency !== this.currentConcurrency) {
-                Logger.info(`🔄 Concurrency changed: ${this.currentConcurrency} → ${freshConcurrency}`);
-                this.currentConcurrency = freshConcurrency;
-                this.worker.concurrency = freshConcurrency;
-            }
-            Logger.info(`Processing Job ${job.id}`, job.data);
-            // Add jitter delay (0-5s) to avoid simultaneous browser start
-            const jitter = Math.floor(Math.random() * 5000);
-            Logger.info(`⏳ Jitter delay for ${job.id}: ${jitter}ms`);
-            await new Promise(r => setTimeout(r, jitter));
-            const jobDataWithId = { ...job.data, jobId: job.id };
-            await this.processJob(jobDataWithId);
+            // Set the per-job log context so EVERY Logger line inside this job
+            // carries the account email → server.js routes it into the live
+            // Process Log panel for this account.
+            return withLogContext({ email: job.data.userEmail }, async () => {
+                // Re-read concurrency before each job and update if changed
+                const freshConcurrency = this.loadConcurrency();
+                if (freshConcurrency !== this.currentConcurrency) {
+                    Logger.info(`🔄 Concurrency changed: ${this.currentConcurrency} → ${freshConcurrency}`);
+                    this.currentConcurrency = freshConcurrency;
+                    this.worker.concurrency = freshConcurrency;
+                }
+                Logger.info(`Processing Job ${job.id}`, job.data);
+                // Add jitter delay (0-5s) to avoid simultaneous browser start
+                const jitter = Math.floor(Math.random() * 5000);
+                Logger.info(`⏳ Jitter delay for ${job.id}: ${jitter}ms`);
+                await new Promise(r => setTimeout(r, jitter));
+                const jobDataWithId = { ...job.data, jobId: job.id };
+                await this.processJob(jobDataWithId);
+            });
         }, {
             connection: redisConnection,
             concurrency: this.currentConcurrency,
