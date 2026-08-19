@@ -6,6 +6,10 @@ import { SSHUploader } from '../services/ssh/SSHUploader.js';
 import { Logger, withLogContext } from '../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
+// Emails currently being processed across ALL jobs/workers — prevents two jobs from
+// racing the same account (checkout vs domain-verify). Module-level so it survives
+// worker re-instantiation.
+const inFlightAccounts = new Set();
 export class PrepWorker {
     loadConcurrency() {
         try {
@@ -50,20 +54,42 @@ export class PrepWorker {
             // carries the account email → server.js routes it into the live
             // Process Log panel for this account.
             return withLogContext({ email: job.data.userEmail }, async () => {
-                // Re-read concurrency before each job and update if changed
-                const freshConcurrency = this.loadConcurrency();
-                if (freshConcurrency !== this.currentConcurrency) {
-                    Logger.info(`🔄 Concurrency changed: ${this.currentConcurrency} → ${freshConcurrency}`);
-                    this.currentConcurrency = freshConcurrency;
-                    this.worker.concurrency = freshConcurrency;
+                // ── IN-FLIGHT DEDUP ────────────────────────────────────────────────
+                // The same account can be enqueued twice (accounts.txt bulk + manual/API
+                // + Telegram). With concurrency up to 18, two jobs for one email run
+                // PARALLEL browser flows that fight over the same page (e.g. one doing
+                // checkout while the other clicks "Verify domain" in the Admin Console).
+                // Guard: only one job per email may process at a time. A duplicate job
+                // completes as a no-op; once the active job finishes, new jobs for that
+                // email run normally again.
+                const inFlightKey = (job.data.userEmail || '').trim().toLowerCase();
+                if (inFlightKey) {
+                    if (inFlightAccounts.has(inFlightKey)) {
+                        Logger.warn(`⏭️ Job ${job.id} SKIPPED — account ${inFlightKey} is already being processed by another job (in-flight dedup).`);
+                        return;
+                    }
+                    inFlightAccounts.add(inFlightKey);
                 }
-                Logger.info(`Processing Job ${job.id}`, job.data);
-                // Add jitter delay (0-5s) to avoid simultaneous browser start
-                const jitter = Math.floor(Math.random() * 5000);
-                Logger.info(`⏳ Jitter delay for ${job.id}: ${jitter}ms`);
-                await new Promise(r => setTimeout(r, jitter));
-                const jobDataWithId = { ...job.data, jobId: job.id };
-                await this.processJob(jobDataWithId);
+                try {
+                    // Re-read concurrency before each job and update if changed
+                    const freshConcurrency = this.loadConcurrency();
+                    if (freshConcurrency !== this.currentConcurrency) {
+                        Logger.info(`🔄 Concurrency changed: ${this.currentConcurrency} → ${freshConcurrency}`);
+                        this.currentConcurrency = freshConcurrency;
+                        this.worker.concurrency = freshConcurrency;
+                    }
+                    Logger.info(`Processing Job ${job.id}`, job.data);
+                    // Add jitter delay (0-5s) to avoid simultaneous browser start
+                    const jitter = Math.floor(Math.random() * 5000);
+                    Logger.info(`⏳ Jitter delay for ${job.id}: ${jitter}ms`);
+                    await new Promise(r => setTimeout(r, jitter));
+                    const jobDataWithId = { ...job.data, jobId: job.id };
+                    await this.processJob(jobDataWithId);
+                }
+                finally {
+                    if (inFlightKey)
+                        inFlightAccounts.delete(inFlightKey);
+                }
             });
         }, {
             connection: redisConnection,
