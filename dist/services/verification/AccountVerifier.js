@@ -2819,62 +2819,88 @@ export class AccountVerifier {
         }
         if (!hasInputsNow) {
             log(`ℹ️ No address inputs visible — looking for Add/Edit trigger in frames`);
+            // Reference behaviour: click interactive elements (button/a/[role=button]/[tabindex])
+            // ONLY, preferring the one inside the "contact information" heading container.
+            const frameList = await getUsableFrames();
             let triggered = false;
-            const frames3 = await getUsableFrames();
-            for (const { frame, page: fp } of frames3) {
+            let frameUrl = '';
+            for (const { frame } of frameList) {
                 try {
-                    // Strategy A: find "add name and address" / "add name" / "add address"
-                    // / "edit address" / "change" trigger in ANY frame, heading or not.
                     triggered = await safeEval(frame, () => {
-                        const clickables = [...document.querySelectorAll('button, a, [role="button"], [tabindex="0"], div, span, .goog-link, [data-tooltip]')];
-                        for (const el of clickables) {
-                            const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-                            if (/^(add name and address|add name|add address|edit address|edit|change|add|\+)$/i.test(t) ||
-                                /add name|add address|edit address/i.test(t)) {
-                                const rect = el.getBoundingClientRect();
-                                if (rect.width > 0 && rect.height > 0) {
+                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+                        const labels = ['add name and address', 'add name', 'add address', 'edit address', 'add', 'edit', 'change', '+'];
+                        const isInteract = (el) => {
+                            const tag = el.tagName.toLowerCase();
+                            const role = el.getAttribute && el.getAttribute('role');
+                            return tag === 'button' || role === 'button' ||
+                                (tag === 'a' && el.hasAttribute && el.hasAttribute('href')) ||
+                                (tag === 'input' && (el.type === 'button' || el.type === 'submit')) ||
+                                (el.getAttribute && el.getAttribute('tabindex') !== null && el.getAttribute('tabindex') !== '-1');
+                        };
+                        const clickMatch = (el) => {
+                            const t = norm(el.textContent);
+                            const lc = t.toLowerCase();
+                            const aLabel = norm(el.getAttribute && el.getAttribute('aria-label'));
+                            const title = norm(el.getAttribute && el.getAttribute('title'));
+                            const hit = labels.some(l => {
+                                const ll = l.toLowerCase();
+                                return lc === ll || aLabel === ll || title === ll;
+                            }) ||
+                                (lc.includes('add name and address') || lc.includes('add name') || lc.includes('add address') || lc.includes('edit address') ||
+                                    aLabel.includes('add name') || aLabel.includes('add address'));
+                            if (hit) {
+                                const r = el.getBoundingClientRect();
+                                if (r.width > 0 && r.height > 0) {
                                     el.scrollIntoView({ block: 'center', behavior: 'instant' });
                                     el.click();
                                     return true;
                                 }
                             }
-                        }
-                        // Strategy B: find heading container then nested clickable
+                            return false;
+                        };
+                        // Strategy B (reference): find "contact information" heading, walk to container, click interactive inside
                         const allEls = [...document.querySelectorAll('*')];
                         let headingEl = null;
                         for (const el of allEls) {
                             const t = (el.childNodes.length <= 3 ? el.textContent || '' : '').trim();
-                            if ((/^contact information$/i.test(t) || /^billing address$/i.test(t) || /^address$/i.test(t)) && el.getBoundingClientRect().width > 0) {
+                            if (/^contact information$/i.test(t) && el.getBoundingClientRect().width > 0) {
                                 headingEl = el;
                                 break;
                             }
                         }
                         if (headingEl) {
                             let container = headingEl;
-                            for (let i = 0; i < 10 && container.parentElement; i++)
+                            for (let i = 0; i < 8 && container.parentElement; i++)
                                 container = container.parentElement;
-                            const inner = [...container.querySelectorAll('button, a, [role="button"], [tabindex="0"], div, span')];
+                            const inner = [...container.querySelectorAll('button, a, [role="button"], [tabindex="0"]')];
                             for (const el of inner) {
-                                const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-                                if (/^(add|edit|change|\+)$/i.test(t) || /add name|add address|edit address/i.test(t)) {
-                                    const rect = el.getBoundingClientRect();
-                                    if (rect.width > 0 && rect.height > 0) {
-                                        el.scrollIntoView({ block: 'center', behavior: 'instant' });
-                                        el.click();
-                                        return true;
-                                    }
-                                }
+                                if (clickMatch(el))
+                                    return true;
                             }
                         }
+                        // Strategy A (interactive-only, DOM order)
+                        const clickables = [...document.querySelectorAll('button, a, [role="button"], [tabindex="0"], [aria-haspopup]')];
+                        for (const el of clickables) {
+                            if (!isInteract(el))
+                                continue;
+                            if (clickMatch(el))
+                                return true;
+                        }
                         return false;
-                    }, undefined, 3500);
+                    }, undefined, 5000);
                     if (triggered === true) {
-                        log(`✅ Triggered "Add name and address" / address form open (page=${fp.url().substring(0, 80)})`);
-                        await humanDelay(2000, 3000);
+                        frameUrl = frame.url();
                         break;
                     }
                 }
                 catch (e) { }
+            }
+            if (triggered === true) {
+                log(`✅ Triggered "Add name and address" / address form open (frame=${frameUrl.substring(0, 80)})`);
+                await humanDelay(2000, 3000);
+            }
+            else {
+                warn(`⚠️ No interactive "Add name and address" trigger found in any frame`);
             }
         }
         // ── Step 4: Fill each field with retry (reference: fillInputInFramesWithRetry) ──
@@ -3210,15 +3236,19 @@ export class AccountVerifier {
             else if (!anyFieldFilled) {
                 warn(`⚠️ No address input was found/filled — the "Add name and address" trigger likely never opened. Re-triggering...`);
                 await humanDelay(1000, 1500);
-                // Re-attempt the trigger (Strategy A: click "add name and address" directly)
+                // Re-attempt the trigger (interactive elements ONLY — div/span clicks don't open the popup)
                 const trg = await getUsableFrames();
                 for (const { frame } of trg) {
                     try {
                         const t2 = await safeEval(frame, () => {
-                            const clickables = [...document.querySelectorAll('button, a, [role="button"], [tabindex="0"], div, span')];
+                            const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim();
+                            const labels = ['add name and address', 'add name', 'add address'];
+                            const clickables = [...document.querySelectorAll('button, a, [role="button"], [tabindex="0"]')];
                             for (const el of clickables) {
-                                const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-                                if (/^(add name and address|add name|add address)$/i.test(t)) {
+                                const t = norm(el.textContent);
+                                const hit = labels.some(l => t.toLowerCase() === l.toLowerCase()) ||
+                                    t.toLowerCase().includes('add name') || t.toLowerCase().includes('add address');
+                                if (hit) {
                                     const rect = el.getBoundingClientRect();
                                     if (rect.width > 0 && rect.height > 0) {
                                         el.scrollIntoView({ block: 'center', behavior: 'instant' });
@@ -3230,7 +3260,7 @@ export class AccountVerifier {
                             return null;
                         }, undefined, 3500);
                         if (t2) {
-                            log(`✅ Re-clicked "Add name and address" trigger: "${t2}"`);
+                            log(`✅ Re-clicked "Add name and address" trigger (interactive): "${t2}"`);
                             break;
                         }
                     }
