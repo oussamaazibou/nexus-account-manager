@@ -3504,122 +3504,12 @@ export class AccountVerifier {
         }
         log(`✅ NetBanking section clicked`);
         await humanDelay(1500, 2500);
-        // ── Step 3: Pick a bank (reference #selectDropdownOptionRobust) ──
+        // ── Step 3: Pick a bank inside frames ──
+        // VERBATIM port of the reference's bank loop:
+        //   for each bank → for each frame → #selectFromComboboxOrSelectInFrame first,
+        //   then a direct exact-text scan of button/a/option/radio/li/div/span.
         const banks = ['HDFC Bank', 'ICICI Bank', 'State Bank of India', 'Axis Bank', 'Kotak Mahindra Bank', 'YES Bank', 'IDFC FIRST Bank', 'Punjab National Bank', 'Bank of Baroda', 'Canara Bank', 'Union Bank of India', 'IndusInd Bank', 'Federal Bank', 'RBL Bank', 'South Indian Bank'];
-        // Open one matching dropdown and pick the option by exact text across ALL frames.
-        const selectBankViaDropdown = async (bank) => {
-            const frames = await getUsableFrames();
-            for (const { frame, page: dropdownPage } of frames) {
-                try {
-                    const matched = await safeEval(frame, (keywords) => {
-                        const getVisibleText = (n) => (n.textContent || n.innerText || '').trim().toLowerCase();
-                        const attrsF = (e) => [e.getAttribute('placeholder'), e.getAttribute('aria-label'), e.getAttribute('name'), e.id, e.className, e.tagName].map((a) => (a || '').toLowerCase());
-                        const els = [...document.querySelectorAll('select, [role="combobox"], [role="listbox"], [role="button"], input[aria-haspopup="listbox"], input[aria-haspopup="true"], [aria-expanded]')];
-                        for (const el of els) {
-                            const attrs = attrsF(el);
-                            let hit = keywords.some((ph) => attrs.some((a) => a.includes(ph)));
-                            if (!hit && el.getAttribute('aria-labelledby')) {
-                                for (const id of (el.getAttribute('aria-labelledby') || '').split(/\s+/)) {
-                                    const l = document.getElementById(id);
-                                    if (l && keywords.some((ph) => getVisibleText(l).includes(ph))) {
-                                        hit = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!hit && el.id) {
-                                for (const l of document.querySelectorAll(`label[for="${el.id}"]`)) {
-                                    if (keywords.some((ph) => getVisibleText(l).includes(ph))) {
-                                        hit = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!hit) {
-                                let p = el.parentElement;
-                                let d = 0;
-                                while (p && d < 5) {
-                                    const combos = p.querySelectorAll('select, [role="combobox"], [role="button"], [role="listbox"], input[aria-haspopup]');
-                                    if (combos.length === 1) {
-                                        if (getVisibleText(p).includes('bank') || keywords.some((ph) => getVisibleText(p).includes(ph))) {
-                                            hit = true;
-                                            break;
-                                        }
-                                    }
-                                    else {
-                                        for (const child of [...p.children]) {
-                                            if (child !== el && !child.contains(el) && !child.querySelector('select, [role="combobox"], [role="button"], [role="listbox"], input, textarea')) {
-                                                if (keywords.some((ph) => getVisibleText(child).includes(ph))) {
-                                                    hit = true;
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    p = p.parentElement;
-                                    d++;
-                                }
-                            }
-                            if (hit) {
-                                const r = el.getBoundingClientRect();
-                                if (r.width > 0 && r.height > 0)
-                                    return el;
-                            }
-                        }
-                        return null;
-                    }, ['bank', 'choose bank', 'select bank', 'select your bank', 'net banking bank', 'select a bank'], 4000);
-                    if (matched) {
-                        // Native mouse click to open the dropdown (reference)
-                        await safeEval(frame, (el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }), matched, 4000).catch(() => { });
-                        await humanDelay(200, 400);
-                        const box = await matched.boundingBox().catch(() => null);
-                        if (!box || box.width === 0 || box.height === 0)
-                            continue;
-                        log(`🖱️ Clicking bank dropdown to open options`);
-                        await dropdownPage.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-                        await humanDelay(800, 1500);
-                        // Scan ALL frames for exact-text option
-                        const allFrames = await getUsableFrames();
-                        for (const { frame: f } of allFrames) {
-                            try {
-                                const opts = await f.$$('[role="option"], li, div, span, [role="listbox"] *');
-                                for (const opt of opts) {
-                                    const txt = await safeEval(opt, (e) => { const r = e.getBoundingClientRect(); if (r.width === 0 || r.height === 0)
-                                        return null; return (e.textContent || e.innerText || '').trim(); }, undefined, 3000);
-                                    if (txt && String(txt).toLowerCase() === bank.toLowerCase()) {
-                                        const optBox = await opt.boundingBox().catch(() => null);
-                                        if (optBox) {
-                                            log(`🎯 Found matching bank option element with text "${txt}" — clicking it`);
-                                            await opt.evaluate((e) => e.scrollIntoView({ block: 'center', behavior: 'instant' })).catch(() => { });
-                                            await humanDelay(150, 300);
-                                            const optFb = await opt.boundingBox();
-                                            if (optFb) {
-                                                await dropdownPage.mouse.click(optFb.x + optFb.width / 2, optFb.y + optFb.height / 2);
-                                                await humanDelay(500, 1000);
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                    await opt.dispose().catch(() => { });
-                                }
-                            }
-                            catch (e) { }
-                        }
-                        // Keyboard fallback
-                        log(`⚠️ Bank option element not found by click — trying keyboard fallback`);
-                        await dropdownPage.keyboard.type(bank, { delay: Math.random() * 30 + 30 });
-                        await humanDelay(500, 800);
-                        await dropdownPage.keyboard.press('Enter');
-                        await humanDelay(500, 1000);
-                        return true;
-                    }
-                }
-                catch (e) { }
-            }
-            return false;
-        };
-        // Direct scan fallback: an element whose text EQUALS the bank name (radio rows / option rows).
-        const q$$ = async (frame, sel, ms = 4000) => {
+        const q$$ = async (frame, sel, ms = 6000) => {
             try {
                 return await Promise.race([
                     frame.$$(sel),
@@ -3630,9 +3520,187 @@ export class AccountVerifier {
                 return [];
             }
         };
-        const selectBankDirect = async (bank) => {
+        // ── #selectDropdownOptionRobust (reference verbatim) ──
+        const selectDropdownOptionRobust = async (frame, pageForMouse, el, value) => {
+            try {
+                const box = await el.boundingBox();
+                if (!box)
+                    return false;
+                await el.evaluate((e) => e.scrollIntoView({ block: 'center', behavior: 'instant' })).catch(() => { });
+                await humanDelay(200, 400);
+                const fb = await el.boundingBox();
+                if (!fb)
+                    return false;
+                log(`🖱️ Clicking dropdown element to open options`);
+                await pageForMouse.mouse.click(fb.x + fb.width / 2, fb.y + fb.height / 2);
+                await humanDelay(800, 1500); // Wait for options to transition in
+                // Search all frames for matching option elements
+                const allFrames = await getUsableFrames();
+                for (const { frame: f } of allFrames) {
+                    try {
+                        const options = await q$$(f, '[role="option"], li, div, span, [role="listbox"] *');
+                        for (const opt of options) {
+                            const txt = await opt.evaluate((e) => {
+                                const rect = e.getBoundingClientRect();
+                                if (rect.width === 0 || rect.height === 0)
+                                    return null;
+                                return (e.textContent || e.innerText || '').trim();
+                            }).catch(() => null);
+                            if (txt && String(txt).toLowerCase() === value.toLowerCase()) {
+                                const optBox = await opt.boundingBox();
+                                if (optBox) {
+                                    log(`🎯 Found matching option element with text "${txt}" — clicking it`);
+                                    await opt.evaluate((e) => e.scrollIntoView({ block: 'center', behavior: 'instant' })).catch(() => { });
+                                    await humanDelay(150, 300);
+                                    const optFb = await opt.boundingBox();
+                                    if (optFb) {
+                                        await pageForMouse.mouse.click(optFb.x + optFb.width / 2, optFb.y + optFb.height / 2);
+                                        await humanDelay(500, 1000);
+                                        return true;
+                                    }
+                                }
+                            }
+                            await opt.dispose().catch(() => { });
+                        }
+                    }
+                    catch (e) { }
+                }
+                // Fallback: type the value and press Enter
+                log(`⚠️ Option element not found by click — trying keyboard fallback`);
+                await pageForMouse.keyboard.type(value, { delay: Math.random() * 30 + 30 });
+                await humanDelay(500, 800);
+                await pageForMouse.keyboard.press('Enter');
+                await humanDelay(500, 1000);
+                return true;
+            }
+            catch (e) { }
+            return false;
+        };
+        // ── #selectFromComboboxOrSelectInFrame (reference verbatim) ──
+        const selectFromComboboxOrSelectInFrame = async (frame, pageForMouse, value) => {
+            try {
+                const matchLabels = ['bank', 'choose bank', 'select bank', 'select your bank', 'net banking bank', 'select a bank'];
+                const dropdowns = await q$$(frame, 'select, [role="combobox"], [role="listbox"], [role="button"], input[aria-haspopup="listbox"], input[aria-haspopup="true"], [aria-expanded]');
+                for (const el of dropdowns) {
+                    let matched = false;
+                    try {
+                        matched = await el.evaluate((input, keywords) => {
+                            const getVisibleText = (node) => (node.textContent || node.innerText || '').trim().toLowerCase();
+                            const attrs = [input.getAttribute('placeholder'), input.getAttribute('aria-label'), input.getAttribute('name'), input.id, input.className, input.tagName].map((a) => (a || '').toLowerCase());
+                            const matchesDirect = keywords.some(ph => {
+                                const lph = ph.toLowerCase();
+                                return attrs.some(a => a.includes(lph));
+                            });
+                            if (matchesDirect) {
+                                const rect = input.getBoundingClientRect();
+                                return rect.width > 0 && rect.height > 0;
+                            }
+                            const labelledby = input.getAttribute('aria-labelledby');
+                            if (labelledby) {
+                                const ids = labelledby.trim().split(/\s+/);
+                                for (const id of ids) {
+                                    const lbl = document.getElementById(id);
+                                    if (lbl) {
+                                        const text = getVisibleText(lbl);
+                                        if (keywords.some(ph => text.includes(ph.toLowerCase()))) {
+                                            const rect = input.getBoundingClientRect();
+                                            return rect.width > 0 && rect.height > 0;
+                                        }
+                                    }
+                                }
+                            }
+                            if (input.id) {
+                                const labels = document.querySelectorAll(`label[for="${input.id}"]`);
+                                for (const lbl of labels) {
+                                    const text = getVisibleText(lbl);
+                                    if (keywords.some(ph => text.includes(ph.toLowerCase()))) {
+                                        const rect = input.getBoundingClientRect();
+                                        return rect.width > 0 && rect.height > 0;
+                                    }
+                                }
+                            }
+                            const matchesAncestor = keywords.some(ph => {
+                                const lph = ph.toLowerCase();
+                                let parent = input.parentElement;
+                                let depth = 0;
+                                while (parent && depth < 5) {
+                                    const combosInParent = parent.querySelectorAll('select, [role="combobox"], [role="button"], [role="listbox"], input[aria-haspopup]');
+                                    if (combosInParent.length === 1) {
+                                        if (getVisibleText(parent).includes(lph))
+                                            return true;
+                                    }
+                                    else {
+                                        for (const child of parent.children) {
+                                            if (child !== input && !child.contains(input)) {
+                                                if (child.querySelector('select, [role="combobox"], [role="button"], [role="listbox"], input[aria-haspopup], input, textarea'))
+                                                    continue;
+                                                if (getVisibleText(child).includes(lph))
+                                                    return true;
+                                            }
+                                        }
+                                    }
+                                    parent = parent.parentElement;
+                                    depth++;
+                                }
+                                return false;
+                            });
+                            if (matchesAncestor) {
+                                const rect = input.getBoundingClientRect();
+                                return rect.width > 0 && rect.height > 0;
+                            }
+                            return false;
+                        }, matchLabels);
+                    }
+                    catch (e) { }
+                    if (matched) {
+                        const tagName = await el.evaluate((e) => e.tagName.toLowerCase()).catch(() => '');
+                        if (tagName === 'select') {
+                            const selectText = await el.evaluate((e, v) => {
+                                const opts = [...e.querySelectorAll('option')];
+                                const match = opts.find((o) => {
+                                    const t = (o.textContent || '').trim();
+                                    return t.toLowerCase() === v.toLowerCase() || t.toLowerCase().includes(v.toLowerCase());
+                                });
+                                if (match) {
+                                    e.value = match.value;
+                                    e.dispatchEvent(new Event('change', { bubbles: true }));
+                                    e.dispatchEvent(new Event('input', { bubbles: true }));
+                                    return match.textContent.trim();
+                                }
+                                return null;
+                            }, value).catch(() => null);
+                            if (selectText) {
+                                log(`🎯 Selected native option: ${selectText}`);
+                                return true;
+                            }
+                        }
+                        else {
+                            const selected = await selectDropdownOptionRobust(frame, pageForMouse, el, value);
+                            if (selected) {
+                                log(`🎯 Selected custom option: ${value}`);
+                                return true;
+                            }
+                        }
+                    }
+                    await el.dispose().catch(() => { });
+                }
+            }
+            catch (e) {
+                warn(`⚠️ Warning in selectFromComboboxOrSelectInFrame: ${e.message}`);
+            }
+            return false;
+        };
+        let bankSelected = false;
+        let bankChosen = null;
+        for (const bank of banks) {
             const frames = await getUsableFrames();
-            for (const { frame } of frames) {
+            for (const { frame, page: pageForMouse } of frames) {
+                bankSelected = await selectFromComboboxOrSelectInFrame(frame, pageForMouse, bank);
+                if (bankSelected) {
+                    bankChosen = bank;
+                    break;
+                }
+                // Direct exact-text scan (reference) — radio rows / option rows.
                 try {
                     const allBtns = await q$$(frame, 'button, a, [role="option"], [role="radio"], li, div, span');
                     for (const btn of allBtns) {
@@ -3648,26 +3716,20 @@ export class AccountVerifier {
                                 catch (clickErr) {
                                     await btn.evaluate((el) => el.click());
                                 }
-                                log(`🎯 Direct-clicked bank option: "${txt}"`);
-                                return true;
+                                bankSelected = true;
+                                bankChosen = bank;
+                                break;
                             }
                         }
+                        await btn.dispose().catch(() => { });
                     }
                 }
                 catch (e) { }
+                if (bankSelected)
+                    break;
             }
-            return false;
-        };
-        let bankSelected = false;
-        let bankChosen = null;
-        for (const bank of banks) {
-            bankSelected = await selectBankViaDropdown(bank);
-            if (!bankSelected)
-                bankSelected = await selectBankDirect(bank);
-            if (bankSelected) {
-                bankChosen = bank;
+            if (bankSelected)
                 break;
-            }
             log(`🔎 no bank match for "${bank}" — next...`);
         }
         log(bankSelected ? `🏦 Bank selected: ${bankChosen}` : `⚠️ No bank could be auto-selected`);
