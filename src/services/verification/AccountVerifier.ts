@@ -3225,12 +3225,13 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
                 await clickTargetHandle.dispose().catch(() => { });
 
                 if (addPaymentClicked) {
+                    await new Promise(r => setTimeout(r, 1500));
                     const pollStart = Date.now();
                     while (Date.now() - pollStart < 20000 && !listOpened) {
                         const checkFrames = await getUsableFrames();
                         for (const { frame } of checkFrames) {
                             try {
-                                listOpened = await safeEval(frame, () => {
+                                listOpened = await frame.evaluate(() => {
                                     const isVis = (e: any) => {
                                         if (!e.isConnected) return false;
                                         const s = window.getComputedStyle(e);
@@ -3246,7 +3247,7 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
                                     const addBtn = [...document.querySelectorAll('button, [role="button"]')].find((b: any) => norm(b.textContent) === 'add payment method' && b.getAttribute('aria-expanded') === 'true');
                                     if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis)) return true;
                                     return false;
-                                }, undefined, 2500);
+                                });
                                 if (listOpened) break;
                             } catch (e) { }
                         }

@@ -3456,12 +3456,13 @@ export class AccountVerifier {
                 }
                 await clickTargetHandle.dispose().catch(() => { });
                 if (addPaymentClicked) {
+                    await new Promise(r => setTimeout(r, 1500));
                     const pollStart = Date.now();
                     while (Date.now() - pollStart < 20000 && !listOpened) {
                         const checkFrames = await getUsableFrames();
                         for (const { frame } of checkFrames) {
                             try {
-                                listOpened = await safeEval(frame, () => {
+                                listOpened = await frame.evaluate(() => {
                                     const isVis = (e) => {
                                         if (!e.isConnected)
                                             return false;
@@ -3481,7 +3482,7 @@ export class AccountVerifier {
                                     if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis))
                                         return true;
                                     return false;
-                                }, undefined, 2500);
+                                });
                                 if (listOpened)
                                     break;
                             }
