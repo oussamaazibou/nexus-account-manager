@@ -2351,13 +2351,15 @@ export class AccountVerifier {
                                         const role = curr.getAttribute('role');
                                         const tab = curr.getAttribute('tabindex');
                                         const isBtnLike = tag === 'button' || role === 'button' ||
+                                            (role === 'option') ||
                                             (tag === 'a' && curr.hasAttribute('href')) ||
                                             (tag === 'input' && (curr.type === 'button' || curr.type === 'submit')) ||
                                             (tab !== null && tab !== '-1');
                                         if (isBtnLike) {
-                                            if (!clickable || curr.getAttribute('aria-haspopup') === 'listbox')
+                                            const isMarker = role === 'option' || curr.getAttribute('aria-haspopup') === 'listbox';
+                                            if (!clickable || isMarker)
                                                 clickable = curr;
-                                            if (curr.getAttribute('aria-haspopup') === 'listbox')
+                                            if (isMarker)
                                                 break;
                                         }
                                     }
@@ -3402,10 +3404,16 @@ export class AccountVerifier {
                                             }
                                             return false;
                                         });
+                                        const hasBankCombobox = [...document.querySelectorAll('[role="combobox"]')].some((cb) => {
+                                            const r = cb.getBoundingClientRect();
+                                            if (r.width <= 0 || r.height <= 0)
+                                                return false;
+                                            const t = norm(cb.getAttribute('aria-label')) + ' ' + norm(cb.textContent);
+                                            return /bank|net\s*banking/i.test(t);
+                                        });
                                         if (summaryVisible)
                                             return true;
-                                        const cb = document.querySelector('[role="combobox"]');
-                                        if (cb && cb.getBoundingClientRect().width > 0)
+                                        if (hasBankCombobox)
                                             return true;
                                         return false;
                                     }, undefined, 2500);
@@ -3473,20 +3481,137 @@ export class AccountVerifier {
         }
         log(`✅ NetBanking section clicked`);
         await humanDelay(1500, 2500);
-        // ── Step 3: Pick a bank ──
+        // ── Step 3: Pick a bank (reference #selectDropdownOptionRobust) ──
         const banks = ['HDFC Bank', 'ICICI Bank', 'State Bank of India', 'Axis Bank', 'Kotak Mahindra Bank', 'YES Bank', 'IDFC FIRST Bank', 'Punjab National Bank', 'Bank of Baroda', 'Canara Bank', 'Union Bank of India', 'IndusInd Bank', 'Federal Bank', 'RBL Bank', 'South Indian Bank'];
-        let bankSelected = false;
-        let bankChosen = null;
-        for (const bank of banks) {
-            const aframes = await getUsableFrames();
-            for (const { frame } of aframes) {
-                bankSelected = await this.selectFromComboboxInFrame(frame, bank, ['bank', 'choose bank', 'select bank', 'select your bank', 'net banking bank', 'select a bank']);
-                if (bankSelected) {
-                    bankChosen = bank;
-                    break;
-                }
+        // Open one matching dropdown and pick the option by exact text across ALL frames.
+        const selectBankViaDropdown = async (bank) => {
+            const frames = await getUsableFrames();
+            for (const { frame, page: dropdownPage } of frames) {
                 try {
-                    const allBtns = await frame.$$('button, a, [role="option"], [role="radio"], li, div, span');
+                    const matched = await safeEval(frame, (keywords) => {
+                        const getVisibleText = (n) => (n.textContent || n.innerText || '').trim().toLowerCase();
+                        const attrsF = (e) => [e.getAttribute('placeholder'), e.getAttribute('aria-label'), e.getAttribute('name'), e.id, e.className, e.tagName].map((a) => (a || '').toLowerCase());
+                        const els = [...document.querySelectorAll('select, [role="combobox"], [role="listbox"], [role="button"], input[aria-haspopup="listbox"], input[aria-haspopup="true"], [aria-expanded]')];
+                        for (const el of els) {
+                            const attrs = attrsF(el);
+                            let hit = keywords.some((ph) => attrs.some((a) => a.includes(ph)));
+                            if (!hit && el.getAttribute('aria-labelledby')) {
+                                for (const id of (el.getAttribute('aria-labelledby') || '').split(/\s+/)) {
+                                    const l = document.getElementById(id);
+                                    if (l && keywords.some((ph) => getVisibleText(l).includes(ph))) {
+                                        hit = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!hit && el.id) {
+                                for (const l of document.querySelectorAll(`label[for="${el.id}"]`)) {
+                                    if (keywords.some((ph) => getVisibleText(l).includes(ph))) {
+                                        hit = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!hit) {
+                                let p = el.parentElement;
+                                let d = 0;
+                                while (p && d < 5) {
+                                    const combos = p.querySelectorAll('select, [role="combobox"], [role="button"], [role="listbox"], input[aria-haspopup]');
+                                    if (combos.length === 1) {
+                                        if (getVisibleText(p).includes('bank') || keywords.some((ph) => getVisibleText(p).includes(ph))) {
+                                            hit = true;
+                                            break;
+                                        }
+                                    }
+                                    else {
+                                        for (const child of [...p.children]) {
+                                            if (child !== el && !child.contains(el) && !child.querySelector('select, [role="combobox"], [role="button"], [role="listbox"], input, textarea')) {
+                                                if (keywords.some((ph) => getVisibleText(child).includes(ph))) {
+                                                    hit = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    p = p.parentElement;
+                                    d++;
+                                }
+                            }
+                            if (hit) {
+                                const r = el.getBoundingClientRect();
+                                if (r.width > 0 && r.height > 0)
+                                    return el;
+                            }
+                        }
+                        return null;
+                    }, ['bank', 'choose bank', 'select bank', 'select your bank', 'net banking bank', 'select a bank'], 4000);
+                    if (matched) {
+                        // Native mouse click to open the dropdown (reference)
+                        await safeEval(frame, (el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }), matched, 4000).catch(() => { });
+                        await humanDelay(200, 400);
+                        const box = await matched.boundingBox().catch(() => null);
+                        if (!box || box.width === 0 || box.height === 0)
+                            continue;
+                        log(`🖱️ Clicking bank dropdown to open options`);
+                        await dropdownPage.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                        await humanDelay(800, 1500);
+                        // Scan ALL frames for exact-text option
+                        const allFrames = await getUsableFrames();
+                        for (const { frame: f } of allFrames) {
+                            try {
+                                const opts = await f.$$('[role="option"], li, div, span, [role="listbox"] *');
+                                for (const opt of opts) {
+                                    const txt = await safeEval(opt, (e) => { const r = e.getBoundingClientRect(); if (r.width === 0 || r.height === 0)
+                                        return null; return (e.textContent || e.innerText || '').trim(); }, undefined, 3000);
+                                    if (txt && String(txt).toLowerCase() === bank.toLowerCase()) {
+                                        const optBox = await opt.boundingBox().catch(() => null);
+                                        if (optBox) {
+                                            log(`🎯 Found matching bank option element with text "${txt}" — clicking it`);
+                                            await opt.evaluate((e) => e.scrollIntoView({ block: 'center', behavior: 'instant' })).catch(() => { });
+                                            await humanDelay(150, 300);
+                                            const optFb = await opt.boundingBox();
+                                            if (optFb) {
+                                                await dropdownPage.mouse.click(optFb.x + optFb.width / 2, optFb.y + optFb.height / 2);
+                                                await humanDelay(500, 1000);
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                    await opt.dispose().catch(() => { });
+                                }
+                            }
+                            catch (e) { }
+                        }
+                        // Keyboard fallback
+                        log(`⚠️ Bank option element not found by click — trying keyboard fallback`);
+                        await dropdownPage.keyboard.type(bank, { delay: Math.random() * 30 + 30 });
+                        await humanDelay(500, 800);
+                        await dropdownPage.keyboard.press('Enter');
+                        await humanDelay(500, 1000);
+                        return true;
+                    }
+                }
+                catch (e) { }
+            }
+            return false;
+        };
+        // Direct scan fallback: an element whose text EQUALS the bank name (radio rows / option rows).
+        const q$$ = async (frame, sel, ms = 4000) => {
+            try {
+                return await Promise.race([
+                    frame.$$(sel),
+                    new Promise(resolve => setTimeout(() => resolve([]), ms))
+                ]);
+            }
+            catch (e) {
+                return [];
+            }
+        };
+        const selectBankDirect = async (bank) => {
+            const frames = await getUsableFrames();
+            for (const { frame } of frames) {
+                try {
+                    const allBtns = await q$$(frame, 'button, a, [role="option"], [role="radio"], li, div, span');
                     for (const btn of allBtns) {
                         const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim()).catch(() => '');
                         if (txt.toLowerCase() === bank.toLowerCase()) {
@@ -3500,19 +3625,27 @@ export class AccountVerifier {
                                 catch (clickErr) {
                                     await btn.evaluate((el) => el.click());
                                 }
-                                bankSelected = true;
-                                bankChosen = bank;
-                                break;
+                                log(`🎯 Direct-clicked bank option: "${txt}"`);
+                                return true;
                             }
                         }
                     }
                 }
                 catch (e) { }
-                if (bankSelected)
-                    break;
             }
-            if (bankSelected)
+            return false;
+        };
+        let bankSelected = false;
+        let bankChosen = null;
+        for (const bank of banks) {
+            bankSelected = await selectBankViaDropdown(bank);
+            if (!bankSelected)
+                bankSelected = await selectBankDirect(bank);
+            if (bankSelected) {
+                bankChosen = bank;
                 break;
+            }
+            log(`🔎 no bank match for "${bank}" — next...`);
         }
         log(bankSelected ? `🏦 Bank selected: ${bankChosen}` : `⚠️ No bank could be auto-selected`);
         await humanDelay(1500, 2500);
