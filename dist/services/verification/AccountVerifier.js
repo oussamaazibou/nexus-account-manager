@@ -1720,20 +1720,43 @@ export class AccountVerifier {
         catch (e) { /* skip */ }
         return false;
     }
+    // ─────────────────────────────────────────────────────────────────────────
+    // Timeout-safe evaluate: page/frame.evaluate can hang forever on busy SPAs
+    // (workspace.google.com checkout). Never blocks the worker.
+    // ─────────────────────────────────────────────────────────────────────────
+    async safeEval(target, fn, arg, timeout = 6000) {
+        try {
+            return await Promise.race([
+                target.evaluate(fn, arg),
+                new Promise(resolve => setTimeout(() => resolve('__CHECKOUT_TIMEOUT__'), timeout))
+            ]);
+        }
+        catch (e) {
+            return null;
+        }
+    }
+    async safe$$(target, selector, timeout = 5000) {
+        try {
+            return await Promise.race([
+                target.$$(selector),
+                new Promise(resolve => setTimeout(() => resolve([]), timeout))
+            ]);
+        }
+        catch (e) {
+            return [];
+        }
+    }
     async waitForCheckoutFormToLoad(page, timeout = 35000) {
         const start = Date.now();
         while (Date.now() - start < timeout) {
             for (const frame of page.frames()) {
-                try {
-                    const found = await frame.evaluate(() => {
-                        const txt = (document.body && document.body.innerText) || '';
-                        const hasInputs = !!document.querySelector('input[placeholder*="Street" i], input[placeholder*="City" i], input[placeholder*="address" i]');
-                        return /contact information|payment method|add payment|add name and address/i.test(txt) || hasInputs;
-                    });
-                    if (found)
-                        return true;
-                }
-                catch (e) { /* skip */ }
+                const found = await this.safeEval(frame, () => {
+                    const txt = (document.body && document.body.innerText) || '';
+                    const hasInputs = !!document.querySelector('input[placeholder*="Street" i], input[placeholder*="City" i], input[placeholder*="address" i]');
+                    return /contact information|payment method|add payment|add name and address/i.test(txt) || hasInputs;
+                }, undefined, 3000);
+                if (found)
+                    return true;
             }
             await new Promise(r => setTimeout(r, 1000));
         }
@@ -2184,413 +2207,435 @@ export class AccountVerifier {
     async handleCheckout(page) {
         const log = (msg) => Logger.info(`[Checkout] ${msg}`);
         const warn = (msg) => Logger.warn(`[Checkout] ${msg}`);
-        const currentUrl = page.url();
-        log(`Evaluating current state — URL: ${currentUrl.substring(0, 120)}`);
-        const pageText = await page.evaluate(() => document.body.innerText).catch(() => '');
-        log(`Page body length: ${pageText.length} chars`);
-        const isOnCheckout = /\/checkout(\b|\/|[\?#])/.test(currentUrl) ||
-            /checkout|trial|sign up|billing|payment/i.test(pageText);
-        if (!isOnCheckout) {
-            log(`Not on checkout page (${currentUrl.substring(0, 80)}) — skipping checkout handling`);
-            return true; // not a failure, just nothing to do
-        }
-        if (currentUrl.includes('admin.google.com')) {
-            log(`Already on Admin Console — trial active. Skipping.`);
-            return true;
-        }
-        log(`✅ CONFIRMED on checkout page. Starting trial flow...`);
-        // ── Step 1: Click "Start a trial" / "Try at no cost for 14 days" ──
-        const trialTexts = [
-            'start a trial', 'start your free trial', 'start free trial',
-            'begin trial', 'start trial', 'try at no cost for 14 days',
-            'try at no cost', 'start now', 'get started', 'start'
-        ];
-        log(`Looking for trial button — targets: ${trialTexts.join(', ')}`);
-        for (let attempt = 0; attempt < 8; attempt++) {
-            const urlNow = page.url();
-            const bodyNow = await page.evaluate(() => document.body.innerText).catch(() => '');
-            // Already past checkout?
-            if (urlNow.includes('admin.google.com') || urlNow.includes('getupgrade')) {
-                log(`Already past checkout — URL: ${urlNow.substring(0, 80)}`);
+        // Heartbeat: always show live progress even if the page JS is busy.
+        const heartbeat = setInterval(() => {
+            try {
+                Logger.info(`[Checkout] ⏳ heartbeat — still working... URL: ${(page.url() || '').substring(0, 100)}`);
+            }
+            catch (e) { }
+        }, 6000);
+        const stopHeartbeat = () => clearInterval(heartbeat);
+        const safeEval = (fn, arg, timeout = 6000) => this.safeEval(page, fn, arg, timeout);
+        const safe$$ = (sel, timeout = 5000) => this.safe$$(page, sel, timeout);
+        try {
+            const currentUrl = page.url();
+            log(`Evaluating state — URL: ${currentUrl.substring(0, 120)}`);
+            const pageText = (await safeEval(() => document.body.innerText)) || '';
+            log(`Page body length: ${pageText.length} chars`);
+            const isOnCheckout = /\/checkout(\b|\/|[\?#])/.test(currentUrl) ||
+                /checkout|trial|sign up|billing|payment/i.test(pageText);
+            if (!isOnCheckout) {
+                log(`Not on checkout page (${currentUrl.substring(0, 80)}) — skipping checkout handling`);
+                stopHeartbeat();
+                return true; // not a failure, just nothing to do
+            }
+            if (currentUrl.includes('admin.google.com')) {
+                log(`Already on Admin Console — trial active. Skipping.`);
+                stopHeartbeat();
                 return true;
             }
-            // Payment form already visible?
-            if (/contact information|payment method|add payment|add name and address/i.test(bodyNow)) {
-                log(`Payment form already visible — skipping trial button click`);
-                break;
-            }
-            // Scan all buttons/links for trial text
-            const found = await page.evaluate((texts) => {
-                const results = [];
-                const els = Array.from(document.querySelectorAll('button, a, [role="button"], span, div[tabindex]'));
-                for (const el of els) {
-                    const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                    const r = el.getBoundingClientRect();
-                    if (t && texts.some(tt => t === tt || t.includes(tt))) {
-                        results.push({ text: t.substring(0, 60), tag: el.tagName.toLowerCase(), visible: r.width > 0 && r.height > 0 });
-                    }
+            log(`✅ CONFIRMED on checkout page. Starting trial flow...`);
+            // ── Step 1: Click "Start a trial" / "Try at no cost for 14 days" ──
+            const trialTexts = [
+                'start a trial', 'start your free trial', 'start free trial',
+                'begin trial', 'start trial', 'try at no cost for 14 days',
+                'try at no cost', 'start now', 'get started', 'start'
+            ];
+            log(`Looking for trial button — targets: ${trialTexts.join(', ')}`);
+            for (let attempt = 0; attempt < 8; attempt++) {
+                const urlNow = page.url();
+                const bodyNow = (await safeEval(() => document.body.innerText)) || '';
+                // Already past checkout?
+                if (urlNow.includes('admin.google.com') || urlNow.includes('getupgrade')) {
+                    log(`Already past checkout — URL: ${urlNow.substring(0, 80)}`);
+                    stopHeartbeat();
+                    return true;
                 }
-                return results;
-            }, trialTexts);
-            if (found.length > 0) {
-                log(`Found ${found.length} trial-matching element(s): ${found.map(f => `[${f.tag}] "${f.text}" visible=${f.visible}`).join(' | ')}`);
-            }
-            else {
-                log(`Attempt ${attempt + 1}/8: No trial button found yet. Body snippet: ${bodyNow.substring(0, 120).replace(/\n+/g, ' ')}`);
-            }
-            if (found.length > 0) {
-                const clicked = await page.evaluate((texts) => {
+                // Payment form already visible?
+                if (/contact information|payment method|add payment|add name and address/i.test(bodyNow)) {
+                    log(`Payment form already visible — skipping trial button click`);
+                    break;
+                }
+                // Scan all buttons/links for trial text
+                const found = (await safeEval((texts) => {
+                    const results = [];
                     const els = Array.from(document.querySelectorAll('button, a, [role="button"], span, div[tabindex]'));
                     for (const el of els) {
                         const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
                         const r = el.getBoundingClientRect();
-                        if (r.width > 0 && r.height > 0 && texts.some(tt => t === tt || t.includes(tt))) {
-                            el.click();
-                            return t;
+                        if (t && texts.some(tt => t === tt || t.includes(tt))) {
+                            results.push({ text: t.substring(0, 60), tag: el.tagName.toLowerCase(), visible: r.width > 0 && r.height > 0 });
                         }
                     }
-                    return null;
-                }, trialTexts);
-                if (clicked) {
-                    log(`✅ CLICKED trial button: "${clicked}"`);
-                    await new Promise(r => setTimeout(r, 6000));
-                    log(`After trial click — URL: ${page.url().substring(0, 100)}`);
-                    break;
+                    return results;
+                }, trialTexts)) || [];
+                if (found.length > 0) {
+                    log(`Found ${found.length} trial-matching element(s): ${found.map(f => `[${f.tag}] "${f.text}" visible=${f.visible}`).join(' | ')}`);
                 }
-            }
-            await new Promise(r => setTimeout(r, 3000));
-        }
-        // ── Step 2: Wait for payment/contact form ──
-        log(`Waiting for payment/contact form (up to 45s)...`);
-        const formLoaded = await this.waitForCheckoutFormToLoad(page, 45000);
-        if (formLoaded)
-            log(`✅ Payment form visible`);
-        else
-            warn(`⚠️ Payment form wait timed out — proceeding anyway`);
-        await new Promise(r => setTimeout(r, 2000));
-        // ── Step 3: Terms gate — "Agree and continue" if on accounts.google.com ──
-        if (page.url().includes('accounts.google.com')) {
-            log(`On accounts.google.com — handling terms gate`);
-            for (const frame of page.frames()) {
-                try {
-                    const allBtns = await frame.$$('button, a, [role="button"], span');
-                    for (const btn of allBtns) {
-                        const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim());
-                        if (/^agree and continue$|^agree & continue$/i.test(txt)) {
-                            const box = await btn.boundingBox();
-                            if (box && box.width > 0 && box.height > 0) {
-                                await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-                                await new Promise(r => setTimeout(r, 400));
-                                const fb = await btn.boundingBox();
-                                if (fb) {
-                                    await page.mouse.click(fb.x + fb.width / 2, fb.y + fb.height / 2);
-                                    log(`✅ CLICKED terms gate "Agree and continue"`);
-                                    await new Promise(r => setTimeout(r, 4000));
-                                    break;
-                                }
+                else {
+                    log(`Attempt ${attempt + 1}/8: No trial button found yet. Body snippet: ${bodyNow.substring(0, 120).replace(/\n+/g, ' ')}`);
+                }
+                if (found.length > 0) {
+                    const clicked = (await safeEval((texts) => {
+                        const els = Array.from(document.querySelectorAll('button, a, [role="button"], span, div[tabindex]'));
+                        for (const el of els) {
+                            const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0 && r.height > 0 && texts.some(tt => t === tt || t.includes(tt))) {
+                                el.click();
+                                return t;
                             }
                         }
+                        return null;
+                    }, trialTexts)) || null;
+                    if (clicked && clicked !== '__CHECKOUT_TIMEOUT__') {
+                        log(`✅ CLICKED trial button: "${clicked}"`);
+                        await new Promise(r => setTimeout(r, 6000));
+                        log(`After trial click — URL: ${page.url().substring(0, 100)}`);
+                        break;
                     }
                 }
-                catch (e) { /* skip */ }
+                await new Promise(r => setTimeout(r, 3000));
             }
-        }
-        // ── Step 4: Check if address already set ──
-        let addressAlreadySet = false;
-        for (const frame of page.frames()) {
-            try {
-                addressAlreadySet = await frame.evaluate(() => {
-                    const txt = (document.body && document.body.innerText) || '';
-                    const hasChange = /\bchange\b/i.test(txt);
-                    const hasContact = /contact information/i.test(txt);
-                    const inputs = [...document.querySelectorAll('input, textarea')];
-                    const hasAddressInputs = inputs.some(i => {
-                        const r = i.getBoundingClientRect();
-                        if (r.width === 0 || r.height === 0)
-                            return false;
-                        const attrs = [i.getAttribute('placeholder'), i.getAttribute('aria-label'), i.getAttribute('name'), i.id].map(a => (a || '').toLowerCase());
-                        return attrs.some(a => a.includes('street') || a.includes('address') || a.includes('city') || a.includes('pin') || a.includes('zip'));
-                    });
-                    return hasContact && hasChange && !hasAddressInputs;
-                }).catch(() => false);
-                if (addressAlreadySet)
-                    break;
-            }
-            catch (e) { /* skip */ }
-        }
-        if (addressAlreadySet) {
-            log(`Address already set — skipping fill`);
-        }
-        else {
-            // ── Step 5: Fill Indian address (5 attempts) ──
-            for (let attempt = 1; attempt <= 5; attempt++) {
-                const addr = this.generateIndianAddress();
-                log(`🏠 Filling address (${attempt}/5): ${addr.city}, ${addr.state} ${addr.pin} — street: ${addr.addressLine1}`);
-                const filledStreet = await this.fillInputInFrames(page, 'Street', ['Street address', 'Address line 1', 'Street', 'Address'], addr.addressLine1);
-                log(`Street fill: ${filledStreet ? '✅' : '⚠️ not found'}`);
-                await new Promise(r => setTimeout(r, 300));
-                try {
-                    const filled2 = await this.fillInputInFrames(page, 'Address Line 2', ['Apt, suite', 'Suite', 'Landmark', 'Address line 2', 'Address 2'], addr.addressLine2);
-                    log(`Line 2 fill: ${filled2 ? '✅' : 'skipped'}`);
-                }
-                catch (e) { }
-                await new Promise(r => setTimeout(r, 200));
-                const filledCity = await this.fillInputInFrames(page, 'City', ['City', 'Town', 'Locality'], addr.city);
-                log(`City fill: ${filledCity ? '✅' : '⚠️ not found'}`);
-                await new Promise(r => setTimeout(r, 300));
-                const filledPin = await this.fillInputInFrames(page, 'PIN', ['Pin code', 'PIN code', 'Zip code', 'Postal code', 'Pincode', 'ZIP', 'Postal'], addr.pin);
-                log(`PIN fill: ${filledPin ? '✅' : '⚠️ not found'}`);
-                await new Promise(r => setTimeout(r, 300));
-                // State dropdown
-                for (let s = 0; s < 3; s++) {
-                    for (const frame of page.frames()) {
-                        const ok = await this.selectFromComboboxInFrame(frame, addr.state, ['state', 'province', 'region', 'state or region']);
-                        if (ok) {
-                            log(`State selected: ${addr.state}`);
-                            break;
-                        }
-                    }
-                    break;
-                }
-                await new Promise(r => setTimeout(r, 500));
-                // Save address
-                let saved = false;
+            // ── Step 2: Wait for payment/contact form ──
+            log(`Waiting for payment/contact form (up to 45s)...`);
+            const formLoaded = await this.waitForCheckoutFormToLoad(page, 45000);
+            if (formLoaded)
+                log(`✅ Payment form visible`);
+            else
+                warn(`⚠️ Payment form wait timed out — proceeding anyway`);
+            await new Promise(r => setTimeout(r, 2000));
+            // ── Step 3: Terms gate — "Agree and continue" if on accounts.google.com ──
+            if (page.url().includes('accounts.google.com')) {
+                log(`On accounts.google.com — handling terms gate`);
                 for (const frame of page.frames()) {
                     try {
-                        const btns = await frame.$$('button, a, [role="button"]');
-                        for (const btn of btns) {
+                        const allBtns = await frame.$$('button, a, [role="button"], span');
+                        for (const btn of allBtns) {
                             const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim());
-                            if (/^(Save|Save address|Apply|OK|Done|Confirm|Continue|Next)$/i.test(txt)) {
+                            if (/^agree and continue$|^agree & continue$/i.test(txt)) {
                                 const box = await btn.boundingBox();
                                 if (box && box.width > 0 && box.height > 0) {
                                     await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-                                    await new Promise(r => setTimeout(r, 200));
+                                    await new Promise(r => setTimeout(r, 400));
                                     const fb = await btn.boundingBox();
                                     if (fb) {
                                         await page.mouse.click(fb.x + fb.width / 2, fb.y + fb.height / 2);
-                                        log(`💾 CLICKED address save: "${txt}"`);
-                                        saved = true;
+                                        log(`✅ CLICKED terms gate "Agree and continue"`);
+                                        await new Promise(r => setTimeout(r, 4000));
                                         break;
                                     }
                                 }
                             }
                         }
                     }
-                    catch (e) { }
-                    if (saved)
-                        break;
-                }
-                await new Promise(r => setTimeout(r, 3000));
-                // Check if form closed
-                let stillOpen = false;
-                for (const frame of page.frames()) {
-                    try {
-                        stillOpen = await frame.evaluate(() => {
-                            const inputs = [...document.querySelectorAll('input, textarea')];
-                            return inputs.some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
-                        });
-                        if (stillOpen)
-                            break;
-                    }
-                    catch (e) { }
-                }
-                if (!stillOpen) {
-                    log(`✅ Address form closed after save`);
-                    break;
-                }
-                warn(`Address form still open, retrying with fresh address...`);
-            }
-        }
-        // ── Step 6: NetBanking payment ──
-        log(`💳 Selecting NetBanking payment method...`);
-        // "Add payment method"
-        let addPaymentClicked = false;
-        for (const frame of page.frames()) {
-            try {
-                const btns = await frame.$$('button, [role="button"], a, span');
-                for (const btn of btns) {
-                    const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
-                    if (txt === 'add payment method') {
-                        await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-                        await new Promise(r => setTimeout(r, 300));
-                        await btn.click().catch(async () => { await btn.evaluate((el) => el.click()); });
-                        addPaymentClicked = true;
-                        log(`✅ CLICKED "Add payment method"`);
-                        break;
-                    }
+                    catch (e) { /* skip */ }
                 }
             }
-            catch (e) { }
-            if (addPaymentClicked)
-                break;
-        }
-        if (!addPaymentClicked)
-            warn(`⚠️ "Add payment method" button NOT found`);
-        if (addPaymentClicked)
-            await new Promise(r => setTimeout(r, 3000));
-        // "Pay with NetBanking"
-        let netBankingClicked = false;
-        for (let retry = 0; retry < 3 && !netBankingClicked; retry++) {
+            // ── Step 4: Check if address already set ──
+            let addressAlreadySet = false;
             for (const frame of page.frames()) {
                 try {
-                    const btns = await frame.$$('[role="option"], [role="button"], button, span, div');
+                    addressAlreadySet = (await this.safeEval(frame, () => {
+                        const txt = (document.body && document.body.innerText) || '';
+                        const hasChange = /\bchange\b/i.test(txt);
+                        const hasContact = /contact information/i.test(txt);
+                        const inputs = [...document.querySelectorAll('input, textarea')];
+                        const hasAddressInputs = inputs.some(i => {
+                            const r = i.getBoundingClientRect();
+                            if (r.width === 0 || r.height === 0)
+                                return false;
+                            const attrs = [i.getAttribute('placeholder'), i.getAttribute('aria-label'), i.getAttribute('name'), i.id].map(a => (a || '').toLowerCase());
+                            return attrs.some(a => a.includes('street') || a.includes('address') || a.includes('city') || a.includes('pin') || a.includes('zip'));
+                        });
+                        return hasContact && hasChange && !hasAddressInputs;
+                    }, undefined, 3000)) === true;
+                    if (addressAlreadySet)
+                        break;
+                }
+                catch (e) { /* skip */ }
+            }
+            if (addressAlreadySet) {
+                log(`Address already set — skipping fill`);
+            }
+            else {
+                // ── Step 5: Fill Indian address (5 attempts) ──
+                for (let attempt = 1; attempt <= 5; attempt++) {
+                    const addr = this.generateIndianAddress();
+                    log(`🏠 Filling address (${attempt}/5): ${addr.city}, ${addr.state} ${addr.pin} — street: ${addr.addressLine1}`);
+                    const filledStreet = await this.fillInputInFrames(page, 'Street', ['Street address', 'Address line 1', 'Street', 'Address'], addr.addressLine1);
+                    log(`Street fill: ${filledStreet ? '✅' : '⚠️ not found'}`);
+                    await new Promise(r => setTimeout(r, 300));
+                    try {
+                        const filled2 = await this.fillInputInFrames(page, 'Address Line 2', ['Apt, suite', 'Suite', 'Landmark', 'Address line 2', 'Address 2'], addr.addressLine2);
+                        log(`Line 2 fill: ${filled2 ? '✅' : 'skipped'}`);
+                    }
+                    catch (e) { }
+                    await new Promise(r => setTimeout(r, 200));
+                    const filledCity = await this.fillInputInFrames(page, 'City', ['City', 'Town', 'Locality'], addr.city);
+                    log(`City fill: ${filledCity ? '✅' : '⚠️ not found'}`);
+                    await new Promise(r => setTimeout(r, 300));
+                    const filledPin = await this.fillInputInFrames(page, 'PIN', ['Pin code', 'PIN code', 'Zip code', 'Postal code', 'Pincode', 'ZIP', 'Postal'], addr.pin);
+                    log(`PIN fill: ${filledPin ? '✅' : '⚠️ not found'}`);
+                    await new Promise(r => setTimeout(r, 300));
+                    // State dropdown
+                    for (let s = 0; s < 3; s++) {
+                        for (const frame of page.frames()) {
+                            const ok = await this.selectFromComboboxInFrame(frame, addr.state, ['state', 'province', 'region', 'state or region']);
+                            if (ok) {
+                                log(`State selected: ${addr.state}`);
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                    await new Promise(r => setTimeout(r, 500));
+                    // Save address
+                    let saved = false;
+                    for (const frame of page.frames()) {
+                        try {
+                            const btns = await frame.$$('button, a, [role="button"]');
+                            for (const btn of btns) {
+                                const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim());
+                                if (/^(Save|Save address|Apply|OK|Done|Confirm|Continue|Next)$/i.test(txt)) {
+                                    const box = await btn.boundingBox();
+                                    if (box && box.width > 0 && box.height > 0) {
+                                        await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                                        await new Promise(r => setTimeout(r, 200));
+                                        const fb = await btn.boundingBox();
+                                        if (fb) {
+                                            await page.mouse.click(fb.x + fb.width / 2, fb.y + fb.height / 2);
+                                            log(`💾 CLICKED address save: "${txt}"`);
+                                            saved = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch (e) { }
+                        if (saved)
+                            break;
+                    }
+                    await new Promise(r => setTimeout(r, 3000));
+                    // Check if form closed
+                    let stillOpen = false;
+                    for (const frame of page.frames()) {
+                        try {
+                            stillOpen = (await this.safeEval(frame, () => {
+                                const inputs = [...document.querySelectorAll('input, textarea')];
+                                return inputs.some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+                            }, undefined, 3000)) === true;
+                            if (stillOpen)
+                                break;
+                        }
+                        catch (e) { }
+                    }
+                    if (!stillOpen) {
+                        log(`✅ Address form closed after save`);
+                        break;
+                    }
+                    warn(`Address form still open, retrying with fresh address...`);
+                }
+            }
+            // ── Step 6: NetBanking payment ──
+            log(`💳 Selecting NetBanking payment method...`);
+            // "Add payment method"
+            let addPaymentClicked = false;
+            for (const frame of page.frames()) {
+                try {
+                    const btns = await frame.$$('button, [role="button"], a, span');
                     for (const btn of btns) {
                         const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
-                        if (txt === 'pay with netbanking') {
+                        if (txt === 'add payment method') {
                             await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-                            await new Promise(r => setTimeout(r, 200));
+                            await new Promise(r => setTimeout(r, 300));
                             await btn.click().catch(async () => { await btn.evaluate((el) => el.click()); });
-                            netBankingClicked = true;
-                            log(`✅ CLICKED "Pay with NetBanking"`);
+                            addPaymentClicked = true;
+                            log(`✅ CLICKED "Add payment method"`);
                             break;
                         }
                     }
                 }
                 catch (e) { }
-                if (netBankingClicked)
+                if (addPaymentClicked)
                     break;
             }
-            if (!netBankingClicked) {
-                warn(`⚠️ "Pay with NetBanking" not found (retry ${retry + 1}/3)`);
-                await new Promise(r => setTimeout(r, 2000));
-            }
-        }
-        if (!netBankingClicked)
-            warn(`⚠️ NetBanking option NOT found after 3 retries`);
-        await new Promise(r => setTimeout(r, 3000));
-        // Pick a bank
-        const banks = ['HDFC Bank', 'ICICI Bank', 'State Bank of India', 'Axis Bank', 'Kotak Mahindra Bank', 'YES Bank', 'IDFC FIRST Bank', 'Punjab National Bank', 'Bank of Baroda', 'Canara Bank'];
-        let bankSelected = false;
-        for (const bank of banks) {
-            for (const frame of page.frames()) {
-                bankSelected = await this.selectFromComboboxInFrame(frame, bank, ['bank', 'choose bank', 'select bank', 'select your bank', 'net banking bank', 'select a bank']);
-                if (bankSelected) {
-                    log(`🏦 Bank selected: ${bank}`);
-                    break;
+            if (!addPaymentClicked)
+                warn(`⚠️ "Add payment method" button NOT found`);
+            if (addPaymentClicked)
+                await new Promise(r => setTimeout(r, 3000));
+            // "Pay with NetBanking"
+            let netBankingClicked = false;
+            for (let retry = 0; retry < 3 && !netBankingClicked; retry++) {
+                for (const frame of page.frames()) {
+                    try {
+                        const btns = await frame.$$('[role="option"], [role="button"], button, span, div');
+                        for (const btn of btns) {
+                            const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
+                            if (txt === 'pay with netbanking') {
+                                await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                                await new Promise(r => setTimeout(r, 200));
+                                await btn.click().catch(async () => { await btn.evaluate((el) => el.click()); });
+                                netBankingClicked = true;
+                                log(`✅ CLICKED "Pay with NetBanking"`);
+                                break;
+                            }
+                        }
+                    }
+                    catch (e) { }
+                    if (netBankingClicked)
+                        break;
                 }
+                if (!netBankingClicked) {
+                    warn(`⚠️ "Pay with NetBanking" not found (retry ${retry + 1}/3)`);
+                    await new Promise(r => setTimeout(r, 2000));
+                }
+            }
+            if (!netBankingClicked)
+                warn(`⚠️ NetBanking option NOT found after 3 retries`);
+            await new Promise(r => setTimeout(r, 3000));
+            // Pick a bank
+            const banks = ['HDFC Bank', 'ICICI Bank', 'State Bank of India', 'Axis Bank', 'Kotak Mahindra Bank', 'YES Bank', 'IDFC FIRST Bank', 'Punjab National Bank', 'Bank of Baroda', 'Canara Bank'];
+            let bankSelected = false;
+            for (const bank of banks) {
+                for (const frame of page.frames()) {
+                    bankSelected = await this.selectFromComboboxInFrame(frame, bank, ['bank', 'choose bank', 'select bank', 'select your bank', 'net banking bank', 'select a bank']);
+                    if (bankSelected) {
+                        log(`🏦 Bank selected: ${bank}`);
+                        break;
+                    }
+                    try {
+                        const btns = await frame.$$('button, a, [role="option"], [role="radio"], li, div, span');
+                        for (const btn of btns) {
+                            const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim());
+                            if (txt.toLowerCase() === bank.toLowerCase()) {
+                                const box = await btn.boundingBox();
+                                if (box && box.width > 0 && box.height > 0) {
+                                    await btn.click().catch(async () => { await btn.evaluate((el) => el.click()); });
+                                    bankSelected = true;
+                                    log(`🏦 Bank clicked: ${bank}`);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    catch (e) { }
+                    if (bankSelected)
+                        break;
+                }
+                if (bankSelected)
+                    break;
+            }
+            if (!bankSelected)
+                warn(`⚠️ No bank could be selected`);
+            await new Promise(r => setTimeout(r, 2000));
+            // Save payment
+            let paymentSaved = false;
+            for (const frame of page.frames()) {
                 try {
-                    const btns = await frame.$$('button, a, [role="option"], [role="radio"], li, div, span');
+                    const btns = await frame.$$('button, a, [role="button"]');
                     for (const btn of btns) {
                         const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim());
-                        if (txt.toLowerCase() === bank.toLowerCase()) {
+                        if (/^(Save|Add|Done|Confirm|Save payment method)$/i.test(txt)) {
                             const box = await btn.boundingBox();
                             if (box && box.width > 0 && box.height > 0) {
+                                await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                                await new Promise(r => setTimeout(r, 200));
                                 await btn.click().catch(async () => { await btn.evaluate((el) => el.click()); });
-                                bankSelected = true;
-                                log(`🏦 Bank clicked: ${bank}`);
+                                paymentSaved = true;
+                                log(`💾 CLICKED payment save: "${txt}"`);
                                 break;
                             }
                         }
                     }
                 }
                 catch (e) { }
-                if (bankSelected)
+                if (paymentSaved)
                     break;
             }
-            if (bankSelected)
-                break;
-        }
-        if (!bankSelected)
-            warn(`⚠️ No bank could be selected`);
-        await new Promise(r => setTimeout(r, 2000));
-        // Save payment
-        let paymentSaved = false;
-        for (const frame of page.frames()) {
-            try {
-                const btns = await frame.$$('button, a, [role="button"]');
-                for (const btn of btns) {
-                    const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim());
-                    if (/^(Save|Add|Done|Confirm|Save payment method)$/i.test(txt)) {
-                        const box = await btn.boundingBox();
-                        if (box && box.width > 0 && box.height > 0) {
-                            await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-                            await new Promise(r => setTimeout(r, 200));
-                            await btn.click().catch(async () => { await btn.evaluate((el) => el.click()); });
-                            paymentSaved = true;
-                            log(`💾 CLICKED payment save: "${txt}"`);
-                            break;
-                        }
-                    }
-                }
-            }
-            catch (e) { }
-            if (paymentSaved)
-                break;
-        }
-        if (!paymentSaved)
-            warn(`⚠️ Payment save button NOT found`);
-        await new Promise(r => setTimeout(r, 2000));
-        // ── Step 7: Click Checkout / Agree and continue ──
-        log(`💳 Looking for checkout/agree button...`);
-        let checkoutClicked = false;
-        for (const frame of page.frames()) {
-            try {
-                const btns = await frame.$$('button, a, [role="button"], span');
-                for (const btn of btns) {
-                    const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
-                    if (txt === 'checkout' || txt === 'agree and continue' || txt === 'agree & continue') {
-                        await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
-                        await new Promise(r => setTimeout(r, 200));
-                        await btn.click().catch(async () => { await btn.evaluate((el) => el.click()); });
-                        checkoutClicked = true;
-                        log(`✅ CLICKED checkout/agree: "${txt}"`);
-                        break;
-                    }
-                }
-            }
-            catch (e) { }
-            if (checkoutClicked)
-                break;
-        }
-        if (!checkoutClicked)
-            warn(`⚠️ Checkout/agree button NOT found`);
-        if (checkoutClicked) {
-            await new Promise(r => setTimeout(r, 10000));
-            // Close popup pages
-            const allPages = await page.browser().pages();
-            for (const p of allPages) {
-                if (p !== page && !p.isClosed()) {
-                    log(`📄 Closing popup: ${p.url().substring(0, 80)}`);
-                    await p.close().catch(() => { });
-                }
-            }
-            // Re-click if popup was closed
+            if (!paymentSaved)
+                warn(`⚠️ Payment save button NOT found`);
+            await new Promise(r => setTimeout(r, 2000));
+            // ── Step 7: Click Checkout / Agree and continue ──
+            log(`💳 Looking for checkout/agree button...`);
+            let checkoutClicked = false;
             for (const frame of page.frames()) {
                 try {
                     const btns = await frame.$$('button, a, [role="button"], span');
                     for (const btn of btns) {
                         const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
                         if (txt === 'checkout' || txt === 'agree and continue' || txt === 'agree & continue') {
+                            await btn.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                            await new Promise(r => setTimeout(r, 200));
                             await btn.click().catch(async () => { await btn.evaluate((el) => el.click()); });
-                            log(`✅ RE-CLICKED checkout after popup`);
+                            checkoutClicked = true;
+                            log(`✅ CLICKED checkout/agree: "${txt}"`);
                             break;
                         }
                     }
                 }
                 catch (e) { }
+                if (checkoutClicked)
+                    break;
             }
-            await new Promise(r => setTimeout(r, 5000));
-        }
-        // ── Step 8: Monitor redirect ──
-        log(`⏳ Monitoring redirect to admin/getupgrade...`);
-        for (let i = 0; i < 30; i++) {
-            const url = page.url();
-            if (url.includes('admin.google.com') || url.includes('getupgrade')) {
-                log(`✅ Reached: ${url.substring(0, 80)}`);
-                return true;
+            if (!checkoutClicked)
+                warn(`⚠️ Checkout/agree button NOT found`);
+            if (checkoutClicked) {
+                await new Promise(r => setTimeout(r, 10000));
+                // Close popup pages
+                const allPages = await page.browser().pages();
+                for (const p of allPages) {
+                    if (p !== page && !p.isClosed()) {
+                        log(`📄 Closing popup: ${p.url().substring(0, 80)}`);
+                        await p.close().catch(() => { });
+                    }
+                }
+                // Re-click if popup was closed
+                for (const frame of page.frames()) {
+                    try {
+                        const btns = await frame.$$('button, a, [role="button"], span');
+                        for (const btn of btns) {
+                            const txt = await btn.evaluate((el) => (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
+                            if (txt === 'checkout' || txt === 'agree and continue' || txt === 'agree & continue') {
+                                await btn.click().catch(async () => { await btn.evaluate((el) => el.click()); });
+                                log(`✅ RE-CLICKED checkout after popup`);
+                                break;
+                            }
+                        }
+                    }
+                    catch (e) { }
+                }
+                await new Promise(r => setTimeout(r, 5000));
             }
-            if (i % 5 === 0)
-                log(`⏳ redirect check ${i}/30 — URL: ${url.substring(0, 80)}`);
-            await new Promise(r => setTimeout(r, 1000));
+            // ── Step 8: Monitor redirect ──
+            log(`⏳ Monitoring redirect to admin/getupgrade...`);
+            for (let i = 0; i < 30; i++) {
+                const url = page.url();
+                if (url.includes('admin.google.com') || url.includes('getupgrade')) {
+                    log(`✅ Reached: ${url.substring(0, 80)}`);
+                    stopHeartbeat();
+                    return true;
+                }
+                if (i % 5 === 0)
+                    log(`⏳ redirect check ${i}/30 — URL: ${url.substring(0, 80)}`);
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            // Manual navigation fallback
+            if (!page.url().includes('admin.google.com')) {
+                log(`🧭 Navigating manually to getupgrade...`);
+                await page.goto('https://workspace.google.com/u/0/getupgrade', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => { });
+                await new Promise(r => setTimeout(r, 5000));
+            }
+            log(`🏁 Checkout flow finished — final URL: ${page.url().substring(0, 100)}`);
+            stopHeartbeat();
+            return true;
         }
-        // Manual navigation fallback
-        if (!page.url().includes('admin.google.com')) {
-            log(`🧭 Navigating manually to getupgrade...`);
-            await page.goto('https://workspace.google.com/u/0/getupgrade', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => { });
-            await new Promise(r => setTimeout(r, 5000));
+        catch (error) {
+            warn(`❌ Checkout flow error: ${error.message}`);
+            stopHeartbeat();
+            return false;
         }
-        log(`🏁 Checkout flow finished — final URL: ${page.url().substring(0, 100)}`);
-        return true;
     }
     async handleCloudConsoleTOS(page) {
         try {

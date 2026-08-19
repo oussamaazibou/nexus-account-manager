@@ -1683,18 +1683,38 @@ export class AccountVerifier {
         return false;
     }
 
-    private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boolean> {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Timeout-safe evaluate: page/frame.evaluate can hang forever on busy SPAs
+    // (workspace.google.com checkout). Never blocks the worker.
+    // ─────────────────────────────────────────────────────────────────────────
+    private async safeEval(target: any, fn: any, arg?: any, timeout = 6000): Promise<any> {
+        try {
+            return await Promise.race([
+                target.evaluate(fn, arg),
+                new Promise(resolve => setTimeout(() => resolve('__CHECKOUT_TIMEOUT__'), timeout))
+            ]);
+        } catch (e) { return null; }
+    }
+
+    private async safe$$(target: any, selector: string, timeout = 5000): Promise<any[]> {
+        try {
+            return await Promise.race([
+                target.$$(selector),
+                new Promise(resolve => setTimeout(() => resolve([]), timeout))
+            ]);
+        } catch (e) { return []; }
+    }
+
+private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boolean> {
         const start = Date.now();
         while (Date.now() - start < timeout) {
             for (const frame of page.frames()) {
-                try {
-                    const found = await frame.evaluate(() => {
-                        const txt = (document.body && document.body.innerText) || '';
-                        const hasInputs = !!document.querySelector('input[placeholder*="Street" i], input[placeholder*="City" i], input[placeholder*="address" i]');
-                        return /contact information|payment method|add payment|add name and address/i.test(txt) || hasInputs;
-                    });
-                    if (found) return true;
-                } catch (e) { /* skip */ }
+                const found = await this.safeEval(frame, () => {
+                    const txt = (document.body && document.body.innerText) || '';
+                    const hasInputs = !!document.querySelector('input[placeholder*="Street" i], input[placeholder*="City" i], input[placeholder*="address" i]');
+                    return /contact information|payment method|add payment|add name and address/i.test(txt) || hasInputs;
+                }, undefined, 3000);
+                if (found) return true;
             }
             await new Promise(r => setTimeout(r, 1000));
         }
@@ -2083,25 +2103,40 @@ export class AccountVerifier {
     private async handleCheckout(page: any): Promise<boolean> {
         const log = (msg: string) => Logger.info(`[Checkout] ${msg}`);
         const warn = (msg: string) => Logger.warn(`[Checkout] ${msg}`);
-        const currentUrl = page.url();
-        log(`Evaluating current state — URL: ${currentUrl.substring(0, 120)}`);
-        const pageText = await page.evaluate(() => document.body.innerText).catch(() => '');
-        log(`Page body length: ${pageText.length} chars`);
 
-        const isOnCheckout = /\/checkout(\b|\/|[\?#])/.test(currentUrl) ||
-            /checkout|trial|sign up|billing|payment/i.test(pageText);
+        // Heartbeat: always show live progress even if the page JS is busy.
+        const heartbeat = setInterval(() => {
+            try {
+                Logger.info(`[Checkout] ⏳ heartbeat — still working... URL: ${(page.url() || '').substring(0, 100)}`);
+            } catch (e) { }
+        }, 6000);
+        const stopHeartbeat = () => clearInterval(heartbeat);
 
-        if (!isOnCheckout) {
-            log(`Not on checkout page (${currentUrl.substring(0, 80)}) — skipping checkout handling`);
-            return true; // not a failure, just nothing to do
-        }
+        const safeEval = (fn: any, arg?: any, timeout = 6000) => this.safeEval(page, fn, arg, timeout);
+        const safe$$ = (sel: string, timeout = 5000) => this.safe$$(page, sel, timeout);
 
-        if (currentUrl.includes('admin.google.com')) {
-            log(`Already on Admin Console — trial active. Skipping.`);
-            return true;
-        }
+        try {
+            const currentUrl = page.url();
+            log(`Evaluating state — URL: ${currentUrl.substring(0, 120)}`);
+            const pageText: string = (await safeEval(() => document.body.innerText)) || '';
+            log(`Page body length: ${pageText.length} chars`);
 
-        log(`✅ CONFIRMED on checkout page. Starting trial flow...`);
+            const isOnCheckout = /\/checkout(\b|\/|[\?#])/.test(currentUrl) ||
+                /checkout|trial|sign up|billing|payment/i.test(pageText);
+
+            if (!isOnCheckout) {
+                log(`Not on checkout page (${currentUrl.substring(0, 80)}) — skipping checkout handling`);
+                stopHeartbeat();
+                return true; // not a failure, just nothing to do
+            }
+
+            if (currentUrl.includes('admin.google.com')) {
+                log(`Already on Admin Console — trial active. Skipping.`);
+                stopHeartbeat();
+                return true;
+            }
+
+            log(`✅ CONFIRMED on checkout page. Starting trial flow...`);
 
         // ── Step 1: Click "Start a trial" / "Try at no cost for 14 days" ──
         const trialTexts = [
@@ -2113,11 +2148,12 @@ export class AccountVerifier {
 
         for (let attempt = 0; attempt < 8; attempt++) {
             const urlNow = page.url();
-            const bodyNow = await page.evaluate(() => document.body.innerText).catch(() => '');
+            const bodyNow: string = (await safeEval(() => document.body.innerText)) || '';
 
             // Already past checkout?
             if (urlNow.includes('admin.google.com') || urlNow.includes('getupgrade')) {
                 log(`Already past checkout — URL: ${urlNow.substring(0, 80)}`);
+                stopHeartbeat();
                 return true;
             }
 
@@ -2128,7 +2164,7 @@ export class AccountVerifier {
             }
 
             // Scan all buttons/links for trial text
-            const found = await page.evaluate((texts: string[]) => {
+            const found = (await safeEval((texts: string[]) => {
                 const results: { text: string; tag: string; visible: boolean }[] = [];
                 const els = Array.from(document.querySelectorAll('button, a, [role="button"], span, div[tabindex]')) as HTMLElement[];
                 for (const el of els) {
@@ -2139,7 +2175,7 @@ export class AccountVerifier {
                     }
                 }
                 return results;
-            }, trialTexts);
+            }, trialTexts)) || [];
 
             if (found.length > 0) {
                 log(`Found ${found.length} trial-matching element(s): ${found.map(f => `[${f.tag}] "${f.text}" visible=${f.visible}`).join(' | ')}`);
@@ -2148,7 +2184,7 @@ export class AccountVerifier {
             }
 
             if (found.length > 0) {
-                const clicked = await page.evaluate((texts: string[]) => {
+                const clicked: string | null = (await safeEval((texts: string[]) => {
                     const els = Array.from(document.querySelectorAll('button, a, [role="button"], span, div[tabindex]')) as HTMLElement[];
                     for (const el of els) {
                         const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -2159,8 +2195,8 @@ export class AccountVerifier {
                         }
                     }
                     return null;
-                }, trialTexts);
-                if (clicked) {
+                }, trialTexts)) || null;
+                if (clicked && clicked !== '__CHECKOUT_TIMEOUT__') {
                     log(`✅ CLICKED trial button: "${clicked}"`);
                     await new Promise(r => setTimeout(r, 6000));
                     log(`After trial click — URL: ${page.url().substring(0, 100)}`);
@@ -2208,7 +2244,7 @@ export class AccountVerifier {
         let addressAlreadySet = false;
         for (const frame of page.frames()) {
             try {
-                addressAlreadySet = await frame.evaluate(() => {
+                addressAlreadySet = (await this.safeEval(frame, () => {
                     const txt = (document.body && document.body.innerText) || '';
                     const hasChange = /\bchange\b/i.test(txt);
                     const hasContact = /contact information/i.test(txt);
@@ -2220,7 +2256,7 @@ export class AccountVerifier {
                         return attrs.some(a => a.includes('street') || a.includes('address') || a.includes('city') || a.includes('pin') || a.includes('zip'));
                     });
                     return hasContact && hasChange && !hasAddressInputs;
-                }).catch(() => false);
+                }, undefined, 3000)) === true;
                 if (addressAlreadySet) break;
             } catch (e) { /* skip */ }
         }
@@ -2284,10 +2320,10 @@ export class AccountVerifier {
                 let stillOpen = false;
                 for (const frame of page.frames()) {
                     try {
-                        stillOpen = await frame.evaluate(() => {
+                        stillOpen = (await this.safeEval(frame, () => {
                             const inputs = [...document.querySelectorAll('input, textarea')];
                             return inputs.some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
-                        });
+                        }, undefined, 3000)) === true;
                         if (stillOpen) break;
                     } catch (e) { }
                 }
@@ -2444,6 +2480,7 @@ export class AccountVerifier {
             const url = page.url();
             if (url.includes('admin.google.com') || url.includes('getupgrade')) {
                 log(`✅ Reached: ${url.substring(0, 80)}`);
+                stopHeartbeat();
                 return true;
             }
             if (i % 5 === 0) log(`⏳ redirect check ${i}/30 — URL: ${url.substring(0, 80)}`);
@@ -2458,7 +2495,13 @@ export class AccountVerifier {
         }
 
         log(`🏁 Checkout flow finished — final URL: ${page.url().substring(0, 100)}`);
+        stopHeartbeat();
         return true;
+        } catch (error: any) {
+            warn(`❌ Checkout flow error: ${error.message}`);
+            stopHeartbeat();
+            return false;
+        }
     }
 
     private async handleCloudConsoleTOS(page: any): Promise<boolean> {
