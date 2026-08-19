@@ -3287,7 +3287,53 @@ export class AccountVerifier {
         await humanDelay(1500, 2500);
         let listOpened = false;
         let addPaymentClicked = false;
-        // ── Step 1: Click "Add payment method" (TextWalker) + poll for list open ──
+        // Detect if the payment-options list is open/visible. Accepts role=option rows
+        // AND plain buttons whose text IS a payment method (Google renders them as buttons).
+        const isPaymentListOpen = async () => {
+            const checkFrames = await getUsableFrames();
+            for (const { frame } of checkFrames) {
+                try {
+                    const open = await safeEval(frame, () => {
+                        const isVis = (e) => { if (!e.isConnected)
+                            return false; const s = window.getComputedStyle(e); return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' && !e.hasAttribute('hidden') && e.getAttribute('aria-hidden') !== 'true' && e.getBoundingClientRect().width > 0; };
+                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        const MARKERS = ['add credit or debit card', 'pay by upi qr code', 'pay with netbanking', 'add credit card', 'debit card', 'credit card'];
+                        // 1. role-based containment (listbox/menu/dialog/option)
+                        const els = [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="dialog"], [role="option"]')];
+                        for (const e of els) {
+                            if (!isVis(e))
+                                continue;
+                            const text = norm(e.textContent);
+                            if (MARKERS.some(m => text.includes(m)))
+                                return true;
+                        }
+                        // 2. Plain button / [role=button] whose text IS a payment method marker
+                        const btns = [...document.querySelectorAll('button, [role="button"], [role="radio"], label, [role="menuitemradio"]')];
+                        for (const b of btns) {
+                            if (!isVis(b))
+                                continue;
+                            const t = norm(b.textContent);
+                            if (MARKERS.some(m => t === m || t.startsWith(m)))
+                                return true;
+                        }
+                        // 3. Expanded "add payment method" discliner with visible options
+                        const addBtn = [...document.querySelectorAll('button, [role="button"]')].find(b => norm(b.textContent) === 'add payment method' && b.getAttribute('aria-expanded') === 'true');
+                        if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis))
+                            return true;
+                        return false;
+                    }, undefined, 2500);
+                    if (open === true)
+                        return true;
+                }
+                catch (e) { }
+            }
+            return false;
+        };
+        // ── Step 1: If not already open, click "Add payment method", then poll ──
+        listOpened = await isPaymentListOpen();
+        if (listOpened) {
+            log(`✅ Payment method list already open (payment options visible)`);
+        }
         for (let retry = 0; retry < 2 && !listOpened; retry++) {
             const found = await findClickableByText('add payment method');
             if (found) {
@@ -3310,43 +3356,20 @@ export class AccountVerifier {
                     warn(`⚠️ Error clicking "Add payment method": ${e.message}`);
                 }
                 await handle.dispose().catch(() => { });
-                if (addPaymentClicked) {
-                    const pollStart = Date.now();
-                    while (Date.now() - pollStart < 20000 && !listOpened) {
-                        const checkFrames = await getUsableFrames();
-                        for (const { frame } of checkFrames) {
-                            try {
-                                listOpened = await safeEval(frame, () => {
-                                    const isVis = (e) => { if (!e.isConnected)
-                                        return false; const s = window.getComputedStyle(e); return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' && !e.hasAttribute('hidden') && e.getAttribute('aria-hidden') !== 'true' && e.getBoundingClientRect().width > 0; };
-                                    const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                                    const els = [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="dialog"], [role="option"]')];
-                                    for (const e of els) {
-                                        if (!isVis(e))
-                                            continue;
-                                        const text = norm(e.textContent);
-                                        if (text.includes('add credit or debit card') || text.includes('pay by upi qr code') || text.includes('pay with netbanking'))
-                                            return true;
-                                    }
-                                    const addBtn = [...document.querySelectorAll('button, [role="button"]')].find(b => norm(b.textContent) === 'add payment method' && b.getAttribute('aria-expanded') === 'true');
-                                    if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis))
-                                        return true;
-                                    return false;
-                                }, undefined, 2500);
-                                if (listOpened)
-                                    break;
-                            }
-                            catch (e) { }
-                        }
-                        if (listOpened)
-                            break;
-                        await new Promise(r => setTimeout(r, 250));
-                    }
-                    if (listOpened)
-                        log(`✅ Payment method list confirmed open`);
-                }
             }
-            if (!listOpened && retry === 0) {
+            else {
+                warn(`ℹ️ No "add payment method" trigger found — payment options may already be listed`);
+            }
+            const pollStart = Date.now();
+            while (Date.now() - pollStart < 20000 && !listOpened) {
+                listOpened = await isPaymentListOpen();
+                if (listOpened)
+                    break;
+                await new Promise(r => setTimeout(r, 250));
+            }
+            if (listOpened)
+                log(`✅ Payment method list confirmed open`);
+            else if (retry === 0) {
                 warn(`⚠️ Payment list did not open. Retrying...`);
                 await humanDelay(1000, 2000);
             }
