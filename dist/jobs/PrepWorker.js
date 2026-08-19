@@ -148,6 +148,22 @@ export class PrepWorker {
         else {
             Logger.info(`⚡ [gcloud-only] Skipping domain verification for ${userEmail} — already verified`);
         }
+        // Step -0.5: Run Setup — Checkout / Trial Start / Address / NetBanking
+        if (mode !== 'gcloud-only' && mode !== 'phone-only' && userPassword) {
+            Logger.info("Step -0.5: Run Setup (checkout/trial/address/payment)");
+            try {
+                const setupResult = await this.verifier.runSetup(userEmail, userPassword, headless);
+                if (!setupResult.success) {
+                    Logger.warn(`⚠️ Run Setup did not complete cleanly: ${setupResult.error} — continuing with gcloud steps`);
+                }
+                else {
+                    Logger.info("✅ Run Setup completed successfully");
+                }
+            }
+            catch (setupErr) {
+                Logger.warn(`⚠️ Run Setup failed (non-blocking): ${setupErr.message} — continuing with gcloud steps`);
+            }
+        }
         // 0. Authenticate
         Logger.info("Step 0: Authenticate with user account");
         if (userPassword) {

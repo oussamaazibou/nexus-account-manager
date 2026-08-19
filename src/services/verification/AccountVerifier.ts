@@ -1546,6 +1546,500 @@ export class AccountVerifier {
     // ─────────────────────────────────────────────────────────────────────────────────
     // Auto-handle Google Cloud Console TOS modal after domain verification
     // ─────────────────────────────────────────────────────────────────────────────────
+    // ════════════════════════════════════════════════════════════════════════════════
+    // RUN SETUP: Checkout / Trial Start / Address / NetBanking / Payment
+    // ════════════════════════════════════════════════════════════════════════════════
+
+    private generateIndianAddress() {
+        const STATES = ['Maharashtra','Karnataka','Tamil Nadu','Delhi','Telangana','Gujarat','Rajasthan','Uttar Pradesh','Kerala','Madhya Pradesh','Punjab','Haryana','Bihar','Odisha','Jharkhand','Chhattisgarh','Himachal Pradesh','Uttarakhand','Goa','Andhra Pradesh','Chandigarh','Puducherry'];
+        const CITIES: Record<string,string[]> = { 'Maharashtra':['Mumbai','Pune','Nagpur','Thane','Nashik'],'Karnataka':['Bangalore','Mysore','Mangalore'],'Tamil Nadu':['Chennai','Coimbatore','Madurai'],'Delhi':['New Delhi','Dwarka','Rohini'],'Telangana':['Hyderabad','Warangal'],'Gujarat':['Ahmedabad','Surat','Vadodara'],'Rajasthan':['Jaipur','Jodhpur','Udaipur'],'Uttar Pradesh':['Lucknow','Kanpur','Noida'],'Kerala':['Kochi','Thiruvananthapuram','Kozhikode'],'Madhya Pradesh':['Bhopal','Indore','Jabalpur'],'Punjab':['Chandigarh','Ludhiana','Amritsar'],'Haryana':['Gurugram','Faridabad','Panipat'],'Bihar':['Patna','Gaya'],'Odisha':['Bhubaneswar','Cuttack'],'Jharkhand':['Ranchi','Jamshedpur'],'Chhattisgarh':['Raipur','Bhilai'],'Himachal Pradesh':['Shimla','Manali'],'Uttarakhand':['Dehradun','Haridwar'],'Goa':['Panaji','Margao'],'Andhra Pradesh':['Visakhapatnam','Vijayawada'] };
+        const STREETS = ['MG Road','Park Street','Station Road','Gandhi Road','Nehru Street','Civil Lines','Main Road','Cross Road','Brigade Road','Commercial Street','Residency Road','Anna Salai','Linking Road','SV Road','Mall Road','Ring Road','Park Avenue','Marine Drive','Cunningham Road','Lavelle Road','Richmond Road','Infantry Road','Sardar Patel Road','Cathedral Road','Sector 18','Velachery Main Road','OMR','ECR','Connaught Place','Banjara Hills Road 12'];
+        const LANDMARKS = ['Near Bus Stand','Opposite City Mall','Behind Railway Station','Near Metro Station','Opposite Park','Near Temple','Near Hospital','Near School','Near Market','Opposite Bank','Near Police Station','Behind Post Office','Near Airport','Near Lake','Near Garden','Opposite Mall','Behind Petrol Pump','Near Highway'];
+        const PIN_PREFIXES: Record<string,string[]> = { 'Maharashtra':['400','410','411','421'],'Karnataka':['560','561','570'],'Tamil Nadu':['600','601','620'],'Delhi':['110'],'Telangana':['500','501'],'Gujarat':['380','390'],'Rajasthan':['302','303'],'Uttar Pradesh':['201','226'],'Kerala':['680','682','695'],'Madhya Pradesh':['462','452'],'Punjab':['140','141','160'],'Haryana':['122','121'],'Bihar':['800','801'],'Odisha':['751','753'],'Jharkhand':['834','831'],'Chhattisgarh':['492','493'],'Himachal Pradesh':['171','176'],'Uttarakhand':['248','249'],'Goa':['403','404'],'Andhra Pradesh':['520','521','530'],'Chandigarh':['160'],'Puducherry':['605'] };
+        const pick = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+        const state = pick(STATES);
+        const city = pick(CITIES[state] || [state]);
+        const pin = pick(PIN_PREFIXES[state] || ['110']) + String(Math.floor(Math.random() * 900) + 100);
+        const houseNum = Math.floor(Math.random() * 500) + 1;
+        const street = pick(STREETS);
+        const landmark = pick(LANDMARKS);
+        return { state, city, pin, addressLine1: `${houseNum}, ${street}`, addressLine2: landmark };
+    }
+
+    private async fillInputInFrames(page: any, label: string, placeholders: string[], value: string): Promise<boolean> {
+        for (const frame of page.frames()) {
+            try {
+                const elements = await frame.$$('input, textarea');
+                for (const el of elements) {
+                    const matched = await el.evaluate((input: any, phList: string[], lbl: string) => {
+                        const gvt = (n: any) => (n.textContent || n.innerText || '').trim().toLowerCase();
+                        const ariaLab = (input.getAttribute('aria-label') || '').toLowerCase();
+                        const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+                        const nameAttr = (input.getAttribute('name') || '').toLowerCase();
+                        const idAttr = (input.id || '').toLowerCase();
+                        const parts = [ariaLab, placeholder, nameAttr, idAttr];
+                        if (input.id) { for (const l of document.querySelectorAll(`label[for="${input.id}"]`)) parts.push(l.textContent || ''); }
+                        const anc = input.closest('label'); if (anc) parts.push(anc.textContent || '');
+                        const lb = input.getAttribute('aria-labelledby');
+                        if (lb) { for (const id of lb.split(/\s+/).filter(Boolean)) { const e = document.getElementById(id); if (e) parts.push(e.textContent || ''); } }
+                        const txt = parts.join(' ').toLowerCase();
+                        if (['organization','company','business','firm','legal name','contact name','recipient'].some(w => txt.includes(w))) return false;
+                        const ll = lbl.toLowerCase();
+                        if (ll.includes('pin')||ll.includes('zip')||ll.includes('postal')) { if (['apt','suite','street','address','city','state','country'].some(w => txt.includes(w))) return false; }
+                        else if (ll.includes('city')||ll.includes('town')) { if (['state','country','zip','pin','postal','street','address'].some(w => txt.includes(w))) return false; }
+                        else if (ll.includes('apt')||ll.includes('suite')||ll.includes('landmark')||ll.includes('line 2')) { if (['pin','zip','postal','city','state','country','street','address line 1'].some(w => txt.includes(w))) return false; }
+                        else if (ll.includes('street')||ll.includes('line 1')||ll.includes('address')) { if (['pin','zip','postal','city','state','country','apt','suite','line 2'].some(w => txt.includes(w))) return false; }
+                        const attrs = [placeholder,ariaLab,nameAttr,idAttr].map(a => (a||'').toLowerCase());
+                        if (phList.some(ph => attrs.some(a => a.includes(ph.toLowerCase())))) { const r = input.getBoundingClientRect(); return r.width > 0 && r.height > 0; }
+                        if (lb) { for (const id of lb.trim().split(/\s+/)) { const e = document.getElementById(id); if (e && phList.some(ph => gvt(e).includes(ph.toLowerCase()))) { const r = input.getBoundingClientRect(); return r.width > 0 && r.height > 0; } } }
+                        if (input.id) { for (const e of document.querySelectorAll(`label[for="${input.id}"]`)) { if (phList.some(ph => gvt(e).includes(ph.toLowerCase()))) { const r = input.getBoundingClientRect(); return r.width > 0 && r.height > 0; } } }
+                        return false;
+                    }, placeholders, label);
+                    if (matched) {
+                        const box = await el.boundingBox();
+                        if (box) {
+                            await el.evaluate((e: any) => e.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                            await new Promise(r => setTimeout(r, 150));
+                            const fb = await el.boundingBox();
+                            if (fb) {
+                                await el.evaluate((e: any) => { e.click(); e.focus(); }).catch(() => {});
+                                await new Promise(r => setTimeout(r, 50));
+                                await page.mouse.click(fb.x + fb.width / 2, fb.y + fb.height / 2, { clickCount: 3 }).catch(() => {});
+                                await new Promise(r => setTimeout(r, 100));
+                                await el.evaluate((e: any) => { e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); });
+                                await el.type(String(value), { delay: Math.random() * 30 + 30 });
+                                await el.evaluate((e: any) => e.dispatchEvent(new Event('blur', { bubbles: true })));
+                                return true;
+                            }
+                        }
+                    }
+                }
+            } catch (e) { /* skip frame */ }
+        }
+        return false;
+    }
+
+    private async selectFromComboboxInFrame(frame: any, value: string, labels: string[]): Promise<boolean> {
+        try {
+            const dropdowns = await frame.$$('select, [role="combobox"], [role="listbox"], [role="button"], input[aria-haspopup="listbox"], [aria-expanded]');
+            for (const el of dropdowns) {
+                const matched = await el.evaluate((input: any, keywords: string[]) => {
+                    const gvt = (n: any) => (n.textContent || n.innerText || '').trim().toLowerCase();
+                    const attrs = [input.getAttribute('placeholder'),input.getAttribute('aria-label'),input.getAttribute('name'),input.id,input.className,input.tagName].map(a => (a||'').toLowerCase());
+                    if (keywords.some(ph => attrs.some(a => a.includes(ph.toLowerCase())))) { const r = input.getBoundingClientRect(); return r.width > 0 && r.height > 0; }
+                    const lb = input.getAttribute('aria-labelledby');
+                    if (lb) { for (const id of lb.trim().split(/\s+/)) { const l = document.getElementById(id); if (l && keywords.some(ph => gvt(l).includes(ph.toLowerCase()))) { const r = input.getBoundingClientRect(); return r.width > 0 && r.height > 0; } } }
+                    if (input.id) { for (const l of document.querySelectorAll(`label[for="${input.id}"]`)) { if (keywords.some(ph => gvt(l).includes(ph.toLowerCase()))) { const r = input.getBoundingClientRect(); return r.width > 0 && r.height > 0; } } }
+                    if (keywords.some(ph => { const lph = ph.toLowerCase(); let p = input.parentElement; let d = 0; while (p && d < 5) { if (gvt(p).includes(lph)) return true; p = p.parentElement; d++; } return false; })) { const r = input.getBoundingClientRect(); return r.width > 0 && r.height > 0; }
+                    return false;
+                }, labels);
+                if (matched) {
+                    const tagName = await el.evaluate((e: any) => e.tagName.toLowerCase());
+                    if (tagName === 'select') {
+                        const ok = await el.evaluate((e: any, v: string) => {
+                            const opts = [...e.querySelectorAll('option')];
+                            const m = opts.find((o: any) => (o.textContent||'').trim().toLowerCase().includes(v.toLowerCase()));
+                            if (m) { e.value = m.value; e.dispatchEvent(new Event('change',{bubbles:true})); e.dispatchEvent(new Event('input',{bubbles:true})); return m.textContent.trim(); }
+                            return null;
+                        }, value);
+                        if (ok) return true;
+                    } else {
+                        try {
+                            const box = await el.boundingBox();
+                            if (box) {
+                                await el.click({ delay: Math.random() * 50 + 50 });
+                                await frame.waitForSelector('[role="listbox"] [role="option"], [role="option"]', { timeout: 5000 }).catch(() => {});
+                                await new Promise(r => setTimeout(r, 500));
+                                const options = await frame.$$('[role="listbox"] [role="option"], [role="option"]');
+                                for (const opt of options) {
+                                    const txt = await opt.evaluate((o: any) => (o.textContent||'').trim());
+                                    if (txt.toLowerCase().includes(value.toLowerCase())) { await opt.click({ delay: Math.random() * 50 + 50 }); return true; }
+                                }
+                                await frame.keyboard.type(value, { delay: Math.random() * 30 + 30 });
+                                await new Promise(r => setTimeout(r, 400));
+                                await frame.keyboard.press('Enter');
+                                return true;
+                            }
+                        } catch (e) { /* skip */ }
+                    }
+                }
+            }
+        } catch (e) { /* skip */ }
+        return false;
+    }
+
+    private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boolean> {
+        const start = Date.now();
+        while (Date.now() - start < timeout) {
+            for (const frame of page.frames()) {
+                try {
+                    const found = await frame.evaluate(() => {
+                        const txt = (document.body && document.body.innerText) || '';
+                        const hasInputs = !!document.querySelector('input[placeholder*="Street" i], input[placeholder*="City" i], input[placeholder*="address" i]');
+                        return /contact information|payment method|add payment|add name and address/i.test(txt) || hasInputs;
+                    });
+                    if (found) return true;
+                } catch (e) { /* skip */ }
+            }
+            await new Promise(r => setTimeout(r, 1000));
+        }
+        return false;
+    }
+
+
+    async runSetup(email: string, password: string, headless: boolean = HEADLESS): Promise<{ success: boolean; error?: string }> {
+        Logger.info(`🚀 [runSetup] Starting checkout/trial setup for: ${email}`);
+        let browser: any = null;
+        try {
+            const proxy = this.pickProxy();
+            const userAgent = new UserAgent({ deviceCategory: 'desktop' });
+            const SCREEN_W = 1920, SCREEN_H = 1040, COLS = 2;
+            const tileW = Math.floor(SCREEN_W / COLS), tileH = Math.floor(SCREEN_H / COLS);
+            const tileIdx = Math.floor(Math.random() * 4);
+            const col = tileIdx % COLS, row = Math.floor(tileIdx / COLS);
+
+            browser = await puppeteer.launch({
+                headless,
+                args: ['--no-sandbox','--disable-setuid-sandbox','--disable-blink-features=AutomationControlled',
+                    `--window-size=${tileW},${tileH}`,`--window-position=${col*tileW},${row*tileH}`,
+                    ...(proxy ? [proxy.arg] : [])],
+                ignoreDefaultArgs: ['--enable-automation']
+            });
+
+            let page = await browser.newPage();
+            if (proxy?.user && proxy?.pass) await page.authenticate({ username: proxy.user, password: proxy.pass });
+            await page.setUserAgent(userAgent.toString());
+            await page.setViewport({ width: tileW, height: tileH });
+            await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+
+            // Step 1: Login via checkout handoff
+            const checkoutUrl = 'https://workspace.google.com/checkout?uj=2606-checkoutentry-signup-coreflow-accountredirect';
+            const loginUrl = `https://accounts.google.com/v3/signin/identifier?Email=${encodeURIComponent(email)}&continue=${encodeURIComponent(checkoutUrl)}&service=CPanel&sacu=1&skipvpage=true&flowName=GlifWebSignIn&flowEntry=ServiceLogin`;
+            Logger.info(`🔗 [runSetup] Navigating to checkout login handoff...`);
+            await page.goto(loginUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+
+            const passInput = await page.waitForSelector('input[type="password"]', { visible: true, timeout: 15000 }).catch(() => null);
+            if (passInput) {
+                await this.humanLikeType(passInput, password);
+                await page.keyboard.press('Enter');
+                await new Promise(r => setTimeout(r, 5000));
+            }
+
+            // Handle post-login challenges
+            for (let i = 0; i < 15; i++) {
+                const url = page.url();
+                if (url.includes('/checkout') || url.includes('admin.google.com') || url.includes('workspace.google.com/u')) break;
+
+                // TOTP
+                const otpInput = await page.$('input[name="totpPin"], input[id*="totp"], input[id*="otp"]').catch(() => null);
+                if (otpInput && this.sshUploader) {
+                    try {
+                        const secret = await this.sshUploader.downloadSecretKey(email);
+                        if (secret) {
+                            const otpCode = this.generateTOTP(secret);
+                            await otpInput.click({ clickCount: 3 }); await page.keyboard.press('Backspace');
+                            await this.humanLikeType(otpInput, otpCode);
+                            await page.keyboard.press('Enter');
+                            await new Promise(r => setTimeout(r, 4000)); continue;
+                        }
+                    } catch (e) { /* skip */ }
+                }
+
+                // Speedbump / TOS
+                if (url.includes('speedbump') || url.includes('gaplustos') || url.includes('workspacetermsofservice')) {
+                    try {
+                        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                        await new Promise(r => setTimeout(r, 1000));
+                        const clicked = await page.evaluate(() => {
+                            const btns = Array.from(document.querySelectorAll('button, span, div[role="button"]')) as HTMLElement[];
+                            const btn = btns.find(b => { const t = (b.innerText||'').trim().toLowerCase(); return t.includes('understand') || t.includes('accept') || t.includes('agree'); });
+                            if (btn) { (btn as any).click(); return true; }
+                            const inp = document.querySelector('input#confirm, input[type="submit"]') as HTMLInputElement;
+                            if (inp) { inp.click(); return true; }
+                            return false;
+                        });
+                        if (clicked) await new Promise(r => setTimeout(r, 3000));
+                    } catch (e) { /* skip */ }
+                }
+
+                // Generic continue
+                await page.evaluate(() => {
+                    const btns = Array.from(document.querySelectorAll('button, div[role="button"]')) as HTMLElement[];
+                    const btn = btns.find(b => { const t = (b.innerText||'').trim().toLowerCase(); const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0 && (t === 'continue' || t === 'next' || t === 'i understand' || t === 'accept'); });
+                    if (btn) btn.click();
+                }).catch(() => {});
+                await new Promise(r => setTimeout(r, 3000));
+            }
+
+            // Step 2: Wait for checkout page
+            Logger.info(`⏳ [runSetup] Waiting for checkout page...`);
+            let onCheckout = false;
+            for (let i = 0; i < 60; i++) {
+                const url = page.url();
+                if (url.includes('/checkout') || url.includes('admin.google.com')) { onCheckout = true; break; }
+                const bodyText = await page.evaluate(() => document.body.innerText).catch(() => '');
+                if (/checkout|trial|sign up|billing|payment/i.test(bodyText)) { onCheckout = true; break; }
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            if (!onCheckout) {
+                await page.goto(checkoutUrl, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+                await new Promise(r => setTimeout(r, 5000));
+            }
+
+            if (page.url().includes('admin.google.com')) {
+                Logger.info(`✅ [runSetup] Already on Admin Console — trial active. Skipping.`);
+                await browser.close(); return { success: true };
+            }
+
+            // Step 3: Click "Start a trial"
+            Logger.info(`🎯 [runSetup] Looking for "Start a trial"...`);
+            for (let attempt = 0; attempt < 5; attempt++) {
+                const clicked = await page.evaluate(() => {
+                    const texts = ['start a trial','start your free trial','start free trial','begin trial','start trial'];
+                    const els = Array.from(document.querySelectorAll('button, a, [role="button"], span')) as HTMLElement[];
+                    for (const el of els) {
+                        const t = (el.innerText||el.textContent||'').trim().toLowerCase();
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0 && texts.some(tt => t === tt || t.includes(tt))) { el.click(); return true; }
+                    }
+                    return false;
+                });
+                if (clicked) { Logger.info(`✅ [runSetup] Clicked "Start a trial"`); await new Promise(r => setTimeout(r, 5000)); break; }
+                await new Promise(r => setTimeout(r, 3000));
+            }
+
+            // Step 4: Wait for payment/contact form
+            Logger.info(`⏳ [runSetup] Waiting for payment contact section...`);
+            const formLoaded = await this.waitForCheckoutFormToLoad(page, 30000);
+            Logger.info(formLoaded ? `✅ [runSetup] Payment sections visible` : `⚠️ [runSetup] Payment section wait timed out`);
+            await new Promise(r => setTimeout(r, 2000));
+
+            // Step 5: Terms gate
+            if (page.url().includes('accounts.google.com')) {
+                for (const frame of page.frames()) {
+                    try {
+                        const allBtns = await frame.$$('button, a, [role="button"], span');
+                        for (const btn of allBtns) {
+                            const txt = await btn.evaluate((el: any) => (el.textContent||'').replace(/\s+/g,' ').trim());
+                            if (/^agree and continue$|^agree & continue$/i.test(txt)) {
+                                const box = await btn.boundingBox();
+                                if (box && box.width > 0 && box.height > 0) {
+                                    await btn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                                    await new Promise(r => setTimeout(r, 400));
+                                    const fb = await btn.boundingBox();
+                                    if (fb) { await page.mouse.click(fb.x+fb.width/2, fb.y+fb.height/2); Logger.info(`✅ [runSetup] Clicked terms gate`); await new Promise(r => setTimeout(r, 4000)); break; }
+                                }
+                            }
+                        }
+                    } catch (e) { /* skip */ }
+                }
+            }
+
+            // Step 6: Fill Indian address (5 attempts)
+            let addressSaved = false;
+            for (let attempt = 1; attempt <= 5 && !addressSaved; attempt++) {
+                const addr = this.generateIndianAddress();
+                Logger.info(`🏠 [runSetup] Filling address (${attempt}/5): ${addr.city}, ${addr.state} ${addr.pin}`);
+                await this.fillInputInFrames(page, 'Street', ['Street address','Address line 1','Street','Address'], addr.addressLine1);
+                await new Promise(r => setTimeout(r, 300));
+                try { await this.fillInputInFrames(page, 'Address Line 2', ['Apt, suite','Suite','Landmark','Address line 2','Address 2'], addr.addressLine2); } catch(e){}
+                await new Promise(r => setTimeout(r, 200));
+                await this.fillInputInFrames(page, 'City', ['City','Town','Locality'], addr.city);
+                await new Promise(r => setTimeout(r, 300));
+                await this.fillInputInFrames(page, 'PIN', ['Pin code','PIN code','Zip code','Postal code','Pincode','ZIP','Postal'], addr.pin);
+                await new Promise(r => setTimeout(r, 300));
+                for (let s = 0; s < 3; s++) { for (const frame of page.frames()) { if (await this.selectFromComboboxInFrame(frame, addr.state, ['state','province','region','state or region'])) { break; } } break; }
+                await new Promise(r => setTimeout(r, 500));
+
+                // Save
+                for (const frame of page.frames()) {
+                    try {
+                        const btns = await frame.$$('button, a, [role="button"]');
+                        for (const btn of btns) {
+                            const txt = await btn.evaluate((el: any) => (el.textContent||'').replace(/\s+/g,' ').trim());
+                            if (/^(Save|Save address|Apply|OK|Done|Confirm|Continue|Next)$/i.test(txt)) {
+                                const box = await btn.boundingBox();
+                                if (box && box.width > 0 && box.height > 0) {
+                                    await btn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                                    await new Promise(r => setTimeout(r, 200));
+                                    const fb = await btn.boundingBox();
+                                    if (fb) { await page.mouse.click(fb.x+fb.width/2, fb.y+fb.height/2); Logger.info(`💾 [runSetup] Save clicked: "${txt}"`); addressSaved = true; break; }
+                                }
+                            }
+                        }
+                    } catch(e){}
+                    if (addressSaved) break;
+                }
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Verify: check if inputs still visible
+                const stillOpen = await page.frames().reduce(async (acc, frame) => {
+                    if (await acc) return true;
+                    try {
+                        return await frame.evaluate(() => {
+                            const inputs = [...document.querySelectorAll('input, textarea')];
+                            return inputs.some(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+                        });
+                    } catch(e) { return false; }
+                }, Promise.resolve(false));
+                if (!stillOpen) { Logger.info(`✅ [runSetup] Address saved successfully`); break; }
+                Logger.warn(`⚠️ [runSetup] Address form still open, retrying...`);
+            }
+
+            // Step 7: NetBanking — "Add payment method" → "Pay with NetBanking" → pick bank
+            Logger.info(`💳 [runSetup] Selecting NetBanking payment...`);
+
+            // Click "Add payment method"
+            let addPaymentClicked = false;
+            for (const frame of page.frames()) {
+                try {
+                    const btns = await frame.$$('button, [role="button"], a, span');
+                    for (const btn of btns) {
+                        const txt = await btn.evaluate((el: any) => (el.textContent||'').replace(/\s+/g,' ').trim().toLowerCase());
+                        if (txt === 'add payment method') {
+                            await btn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                            await new Promise(r => setTimeout(r, 300));
+                            await btn.click().catch(async () => { await btn.evaluate((el: any) => el.click()); });
+                            addPaymentClicked = true; Logger.info(`✅ [runSetup] Clicked "Add payment method"`); break;
+                        }
+                    }
+                } catch(e){}
+                if (addPaymentClicked) break;
+            }
+            if (addPaymentClicked) await new Promise(r => setTimeout(r, 3000));
+
+            // Click "Pay with NetBanking"
+            let netBankingClicked = false;
+            for (let retry = 0; retry < 3 && !netBankingClicked; retry++) {
+                for (const frame of page.frames()) {
+                    try {
+                        const btns = await frame.$$('[role="option"], [role="button"], button, span, div');
+                        for (const btn of btns) {
+                            const txt = await btn.evaluate((el: any) => (el.textContent||'').replace(/\s+/g,' ').trim().toLowerCase());
+                            if (txt === 'pay with netbanking') {
+                                await btn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                                await new Promise(r => setTimeout(r, 200));
+                                await btn.click().catch(async () => { await btn.evaluate((el: any) => el.click()); });
+                                netBankingClicked = true; Logger.info(`✅ [runSetup] Clicked "Pay with NetBanking"`); break;
+                            }
+                        }
+                    } catch(e){}
+                    if (netBankingClicked) break;
+                }
+                if (!netBankingClicked) await new Promise(r => setTimeout(r, 2000));
+            }
+            await new Promise(r => setTimeout(r, 3000));
+
+            // Pick a bank
+            const banks = ['HDFC Bank','ICICI Bank','State Bank of India','Axis Bank','Kotak Mahindra Bank','YES Bank','IDFC FIRST Bank','Punjab National Bank','Bank of Baroda','Canara Bank'];
+            let bankSelected = false;
+            for (const bank of banks) {
+                for (const frame of page.frames()) {
+                    bankSelected = await this.selectFromComboboxInFrame(frame, bank, ['bank','choose bank','select bank','select your bank','net banking bank','select a bank']);
+                    if (bankSelected) { Logger.info(`🏦 [runSetup] Bank selected: ${bank}`); break; }
+                    try {
+                        const btns = await frame.$$('button, a, [role="option"], [role="radio"], li, div, span');
+                        for (const btn of btns) {
+                            const txt = await btn.evaluate((el: any) => (el.textContent||'').replace(/\s+/g,' ').trim());
+                            if (txt.toLowerCase() === bank.toLowerCase()) {
+                                const box = await btn.boundingBox();
+                                if (box && box.width > 0 && box.height > 0) { await btn.click().catch(async () => { await btn.evaluate((el: any) => el.click()); }); bankSelected = true; break; }
+                            }
+                        }
+                    } catch(e){}
+                    if (bankSelected) break;
+                }
+                if (bankSelected) break;
+            }
+            await new Promise(r => setTimeout(r, 2000));
+
+            // Save payment
+            for (const frame of page.frames()) {
+                try {
+                    const btns = await frame.$$('button, a, [role="button"]');
+                    for (const btn of btns) {
+                        const txt = await btn.evaluate((el: any) => (el.textContent||'').replace(/\s+/g,' ').trim());
+                        if (/^(Save|Add|Done|Confirm|Save payment method)$/i.test(txt)) {
+                            const box = await btn.boundingBox();
+                            if (box && box.width > 0 && box.height > 0) {
+                                await btn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                                await new Promise(r => setTimeout(r, 200));
+                                await btn.click().catch(async () => { await btn.evaluate((el: any) => el.click()); });
+                                Logger.info(`💾 [runSetup] Payment saved: "${txt}"`); break;
+                            }
+                        }
+                    }
+                } catch(e){}
+            }
+            await new Promise(r => setTimeout(r, 2000));
+
+            // Step 8: Click Checkout / Agree and continue
+            Logger.info(`💳 [runSetup] Clicking checkout/agree button...`);
+            let checkoutClicked = false;
+            for (const frame of page.frames()) {
+                try {
+                    const btns = await frame.$$('button, a, [role="button"], span');
+                    for (const btn of btns) {
+                        const txt = await btn.evaluate((el: any) => (el.textContent||'').replace(/\s+/g,' ').trim().toLowerCase());
+                        if (txt === 'checkout' || txt === 'agree and continue' || txt === 'agree & continue') {
+                            await btn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+                            await new Promise(r => setTimeout(r, 200));
+                            await btn.click().catch(async () => { await btn.evaluate((el: any) => el.click()); });
+                            checkoutClicked = true; Logger.info(`✅ [runSetup] Checkout clicked`); break;
+                        }
+                    }
+                } catch(e){}
+                if (checkoutClicked) break;
+            }
+
+            if (checkoutClicked) {
+                await new Promise(r => setTimeout(r, 10000));
+                // Close any popup pages
+                const pages = await browser.pages();
+                for (const p of pages) {
+                    if (p !== page && !p.isClosed()) {
+                        Logger.info(`📄 [runSetup] Closing popup: ${p.url()}`);
+                        await p.close().catch(() => {});
+                    }
+                }
+                // Re-click checkout if popup was closed
+                for (const frame of page.frames()) {
+                    try {
+                        const btns = await frame.$$('button, a, [role="button"], span');
+                        for (const btn of btns) {
+                            const txt = await btn.evaluate((el: any) => (el.textContent||'').replace(/\s+/g,' ').trim().toLowerCase());
+                            if (txt === 'checkout' || txt === 'agree and continue' || txt === 'agree & continue') {
+                                await btn.click().catch(async () => { await btn.evaluate((el: any) => el.click()); });
+                                Logger.info(`✅ [runSetup] Re-clicked checkout after popup`); break;
+                            }
+                        }
+                    } catch(e){}
+                }
+                await new Promise(r => setTimeout(r, 5000));
+            }
+
+            // Step 9: Monitor redirect to getupgrade
+            Logger.info(`⏳ [runSetup] Monitoring redirect to getupgrade...`);
+            for (let i = 0; i < 25; i++) {
+                if (page.url().includes('getupgrade')) { Logger.info(`✅ [runSetup] Reached getupgrade page`); break; }
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            // If not redirected, try manual navigation
+            if (!page.url().includes('getupgrade') && !page.url().includes('admin.google.com')) {
+                await page.goto('https://workspace.google.com/u/0/getupgrade', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+            }
+
+            Logger.info(`🏁 [runSetup] Setup complete for ${email} — URL: ${page.url()}`);
+            await browser.close();
+            return { success: true };
+        } catch (error: any) {
+            Logger.error(`❌ [runSetup] Failed for ${email}: ${error.message}`);
+            if (browser) await browser.close().catch(() => {});
+            return { success: false, error: error.message };
+        }
+    }
+
+
     private async handleCloudConsoleTOS(page: any): Promise<boolean> {
         try {
             Logger.info(`🔍 Looking for Cloud Console TOS modal...`);
