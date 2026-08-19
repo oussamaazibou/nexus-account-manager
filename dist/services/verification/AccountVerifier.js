@@ -3329,47 +3329,113 @@ export class AccountVerifier {
             }
             return false;
         };
-        // ── Step 1: If not already open, click "Add payment method", then poll ──
-        listOpened = await isPaymentListOpen();
-        if (listOpened) {
-            log(`✅ Payment method list already open (payment options visible)`);
-        }
+        // ── Step 1: Click "Add payment method" (VERBATIM reference walker + #getUsableFrames loop) ──
         for (let retry = 0; retry < 2 && !listOpened; retry++) {
-            const found = await findClickableByText('add payment method');
-            if (found) {
-                const { handle, frame, page: fp } = found;
+            const framesInfo = await getUsableFrames();
+            let clickTargetHandle = null;
+            let currentFrame = null;
+            let currentPage = null;
+            for (const { frame, page } of framesInfo) {
                 try {
-                    const info = await safeEval(frame, (node) => ({
-                        tag: node.tagName.toLowerCase(), role: node.getAttribute('role'),
-                        hasPopup: node.getAttribute('aria-haspopup'), expanded: node.getAttribute('aria-expanded')
-                    }), handle, 5000);
-                    log(`🎯 Found "Add payment method" | Page: ${fp.url()} | Frame: ${frame.url()} | Tag: ${info?.tag} | Role: ${info?.role} | HasPopup: ${info?.hasPopup}`);
-                    await safeEval(frame, (node) => node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }), handle, 5000);
-                    const el = handle.asElement();
+                    clickTargetHandle = await safeEvalHandle(frame, () => {
+                        const isVisibleAndEnabled = (el) => {
+                            if (!el.isConnected)
+                                return false;
+                            const style = window.getComputedStyle(el);
+                            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.opacity === '0')
+                                return false;
+                            if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true')
+                                return false;
+                            if (el.disabled || el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true')
+                                return false;
+                            if (el.closest('[inert]'))
+                                return false;
+                            const rect = el.getBoundingClientRect();
+                            if (rect.width <= 0 || rect.height <= 0)
+                                return false;
+                            if (rect.bottom < 0 || rect.right < 0 || rect.top > window.innerHeight || rect.left > window.innerWidth)
+                                return false;
+                            return true;
+                        };
+                        const normalizeText = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+                        let n;
+                        let bestClickable = null;
+                        while ((n = walker.nextNode())) {
+                            if (normalizeText(n.nodeValue) === 'add payment method') {
+                                let curr = n.parentElement;
+                                let clickable = null;
+                                while (curr && curr !== document.body) {
+                                    if (isVisibleAndEnabled(curr)) {
+                                        const tag = curr.tagName.toLowerCase();
+                                        const role = curr.getAttribute('role');
+                                        const tabIndex = curr.getAttribute('tabindex');
+                                        const isBtnLike = tag === 'button' || role === 'button' || (tag === 'a' && curr.hasAttribute('href')) ||
+                                            (tag === 'input' && (curr.type === 'button' || curr.type === 'submit')) ||
+                                            (tabIndex !== null && tabIndex !== '-1');
+                                        if (isBtnLike) {
+                                            if (!clickable || curr.getAttribute('aria-haspopup') === 'listbox') {
+                                                clickable = curr;
+                                            }
+                                            if (curr.getAttribute('aria-haspopup') === 'listbox')
+                                                break;
+                                        }
+                                    }
+                                    curr = curr.parentElement;
+                                }
+                                if (clickable) {
+                                    bestClickable = clickable;
+                                    break;
+                                }
+                            }
+                        }
+                        return bestClickable;
+                    }, undefined, 6000);
+                    const el = clickTargetHandle ? clickTargetHandle.asElement() : null;
                     if (el) {
-                        await el.click().catch(async () => { await safeEval(frame, (node) => node.click(), handle, 5000); });
-                        addPaymentClicked = true;
-                        log(`🖱️ Clicked "Add payment method"`);
+                        const info = await safeEval(frame, (node) => ({
+                            tag: node.tagName.toLowerCase(),
+                            role: node.getAttribute('role'),
+                            hasPopup: node.getAttribute('aria-haspopup'),
+                            expanded: node.getAttribute('aria-expanded')
+                        }), clickTargetHandle, 5000);
+                        log(`🎯 Found "Add payment method" | Page: ${page.url()} | Frame: ${frame.url()} | Tag: ${info?.tag} | Role: ${info?.role} | HasPopup: ${info?.hasPopup}`);
+                        await safeEval(frame, (node) => node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }), clickTargetHandle, 5000);
+                        currentFrame = frame;
+                        currentPage = page;
+                        break;
                     }
+                    else {
+                        if (clickTargetHandle)
+                            await clickTargetHandle.dispose().catch(() => { });
+                    }
+                }
+                catch (e) { }
+            }
+            if (currentFrame && clickTargetHandle) {
+                const el = clickTargetHandle.asElement();
+                try {
+                    await el.click();
+                    log(`🖱️ Clicked "Add payment method"`);
+                    addPaymentClicked = true;
                 }
                 catch (e) {
                     warn(`⚠️ Error clicking "Add payment method": ${e.message}`);
                 }
-                await handle.dispose().catch(() => { });
+                await clickTargetHandle.dispose().catch(() => { });
+                if (addPaymentClicked) {
+                    const pollStart = Date.now();
+                    while (Date.now() - pollStart < 20000 && !listOpened) {
+                        listOpened = await isPaymentListOpen();
+                        if (listOpened)
+                            break;
+                        await new Promise(r => setTimeout(r, 250));
+                    }
+                    if (listOpened)
+                        log(`✅ Payment method list confirmed open`);
+                }
             }
-            else {
-                warn(`ℹ️ No "add payment method" trigger found — payment options may already be listed`);
-            }
-            const pollStart = Date.now();
-            while (Date.now() - pollStart < 20000 && !listOpened) {
-                listOpened = await isPaymentListOpen();
-                if (listOpened)
-                    break;
-                await new Promise(r => setTimeout(r, 250));
-            }
-            if (listOpened)
-                log(`✅ Payment method list confirmed open`);
-            else if (retry === 0) {
+            if (!listOpened && retry === 0) {
                 warn(`⚠️ Payment list did not open. Retrying...`);
                 await humanDelay(1000, 2000);
             }
@@ -3379,128 +3445,165 @@ export class AccountVerifier {
             await dumpVisible('payment_list_not_opened');
             return { status: 'failed', detail: 'payment method dialog did not open' };
         }
-        // ── Step 2: Click "Pay with NetBanking" + verify selected ──
+        // ── Step 2: Click "Pay with NetBanking" + verify (VERBATIM reference) ──
         let netBankingVerified = false;
         for (let retry = 0; retry < 2 && !netBankingVerified; retry++) {
-            const found = await findClickableByText('pay with netbanking');
-            if (found) {
-                const { handle, frame, page: fp } = found;
+            let nbClicked = false;
+            let currentFrame = null;
+            let clickTargetHandle = null;
+            let currentPage = null;
+            const framesInfo = await getUsableFrames();
+            for (const { frame, page } of framesInfo) {
                 try {
-                    const info = await safeEval(frame, (node) => ({ tag: node.tagName.toLowerCase(), role: node.getAttribute('role'), selected: node.getAttribute('aria-selected') }), handle, 5000);
-                    log(`🎯 Found "Pay with NetBanking" | Page: ${fp.url()} | Frame: ${frame.url()} | Tag: ${info?.tag} | Role: ${info?.role} | Selected: ${info?.selected}`);
-                    await safeEval(frame, (node) => node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }), handle, 5000);
-                    const el = handle.asElement();
-                    if (el) {
-                        await el.click().catch(async () => { await safeEval(frame, (node) => node.click(), handle, 5000); });
-                        log(`🖱️ Clicked NetBanking option`);
-                    }
-                    let nbClicked = true;
-                    if (nbClicked) {
-                        const pollStart = Date.now();
-                        let verified = false;
-                        while (Date.now() - pollStart < 15000 && !verified) {
-                            try {
-                                const frameInfo = await getUsableFrames();
-                                for (const { frame: f, page: fpp } of frameInfo) {
-                                    const isVerified = await safeEval(f, () => {
-                                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                                        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-                                        let n;
-                                        while ((n = walker.nextNode())) {
-                                            if (norm(n.nodeValue) === 'pay with netbanking') {
-                                                let p = n.parentElement;
-                                                for (let i = 0; i < 6 && p && p !== document.body; i++) {
-                                                    if (p.getAttribute('aria-selected') === 'true' || p.getAttribute('data-is-selected') === 'true')
-                                                        return true;
-                                                    const input = p.querySelector('input[type="radio"], input[type="checkbox"]');
-                                                    if (input && input.checked)
-                                                        return true;
-                                                    p = p.parentElement;
-                                                }
-                                            }
+                    clickTargetHandle = await safeEvalHandle(frame, () => {
+                        const isVis = (el) => {
+                            if (!el.isConnected)
+                                return false;
+                            const style = window.getComputedStyle(el);
+                            return style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse' && style.opacity !== '0' &&
+                                !el.hasAttribute('hidden') && el.getAttribute('aria-hidden') !== 'true' &&
+                                (!el.disabled && !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true') &&
+                                !el.closest('[inert]') && el.getBoundingClientRect().width > 0;
+                        };
+                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+                        let n;
+                        while ((n = walker.nextNode())) {
+                            if (norm(n.nodeValue) === 'pay with netbanking') {
+                                let curr = n.parentElement;
+                                let clickable = null;
+                                while (curr && curr !== document.body) {
+                                    if (isVis(curr)) {
+                                        const role = curr.getAttribute('role');
+                                        const tag = curr.tagName.toLowerCase();
+                                        if (role === 'option' || role === 'button' || tag === 'button' || curr.getAttribute('tabindex') !== null) {
+                                            if (!clickable || role === 'option')
+                                                clickable = curr;
+                                            if (role === 'option')
+                                                break;
                                         }
-                                        const summaryVisible = [...document.querySelectorAll('*')].some((el) => {
-                                            if (el.childNodes.length === 1 && el.childNodes[0].nodeType === Node.TEXT_NODE) {
-                                                const t = norm(el.textContent);
-                                                if (t === 'pay with netbanking' || t === 'netbanking')
-                                                    return el.getBoundingClientRect().width > 0;
-                                            }
-                                            return false;
-                                        });
-                                        const hasBankCombobox = [...document.querySelectorAll('[role="combobox"]')].some((cb) => {
-                                            const r = cb.getBoundingClientRect();
-                                            if (r.width <= 0 || r.height <= 0)
-                                                return false;
-                                            const t = norm(cb.getAttribute('aria-label')) + ' ' + norm(cb.textContent);
-                                            return /bank|net\s*banking/i.test(t);
-                                        });
-                                        if (summaryVisible)
-                                            return true;
-                                        if (hasBankCombobox)
-                                            return true;
-                                        return false;
-                                    }, undefined, 2500);
-                                    if (isVerified === true) {
-                                        verified = true;
-                                        break;
                                     }
-                                    const url = (fpp.url() || '').toLowerCase();
-                                    if (url.includes('netbanking') || url.includes('banktransfer')) {
-                                        verified = true;
-                                        break;
+                                    curr = curr.parentElement;
+                                }
+                                if (clickable)
+                                    return clickable;
+                            }
+                        }
+                        return null;
+                    }, undefined, 6000);
+                    const el = clickTargetHandle ? clickTargetHandle.asElement() : null;
+                    if (el) {
+                        const info = await safeEval(frame, (node) => ({
+                            tag: node.tagName.toLowerCase(), role: node.getAttribute('role'), selected: node.getAttribute('aria-selected')
+                        }), clickTargetHandle, 5000);
+                        log(`🎯 Found "Pay with NetBanking" | Page: ${page.url()} | Frame: ${frame.url()} | Tag: ${info?.tag} | Role: ${info?.role} | Selected: ${info?.selected}`);
+                        await safeEval(frame, (node) => node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }), clickTargetHandle, 5000);
+                        currentFrame = frame;
+                        currentPage = page;
+                        break;
+                    }
+                    else {
+                        if (clickTargetHandle)
+                            await clickTargetHandle.dispose().catch(() => { });
+                    }
+                }
+                catch (e) { }
+            }
+            if (currentFrame && clickTargetHandle) {
+                const el = clickTargetHandle.asElement();
+                // Re-query to get a fresh handle before clicking (reference)
+                const requeryHandle = await safeEvalHandle(currentFrame, () => {
+                    const isVis = (e) => e.isConnected && window.getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0;
+                    const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+                    let n;
+                    while ((n = walker.nextNode())) {
+                        if (norm(n.nodeValue) === 'pay with netbanking') {
+                            let curr = n.parentElement;
+                            while (curr && curr !== document.body) {
+                                if (isVis(curr)) {
+                                    const role = curr.getAttribute('role');
+                                    if (role === 'option' || role === 'button' || curr.tagName.toLowerCase() === 'button' || curr.getAttribute('tabindex') !== null)
+                                        return curr;
+                                }
+                                curr = curr.parentElement;
+                            }
+                        }
+                    }
+                    return null;
+                }, undefined, 6000);
+                const rqEl = requeryHandle ? requeryHandle.asElement() : null;
+                if (rqEl) {
+                    try {
+                        await rqEl.click();
+                        log(`🖱️ Clicked NetBanking option`);
+                        nbClicked = true;
+                    }
+                    catch (e) { }
+                }
+                if (requeryHandle)
+                    await requeryHandle.dispose().catch(() => { });
+                await clickTargetHandle.dispose().catch(() => { });
+                if (nbClicked) {
+                    const pollStart = Date.now();
+                    while (Date.now() - pollStart < 15000 && !netBankingVerified) {
+                        try {
+                            const isVerified = await safeEval(currentFrame, () => {
+                                const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+                                let n;
+                                while ((n = walker.nextNode())) {
+                                    if (norm(n.nodeValue) === 'pay with netbanking') {
+                                        let p = n.parentElement;
+                                        for (let i = 0; i < 6 && p && p !== document.body; i++) {
+                                            if (p.getAttribute('aria-selected') === 'true' || p.getAttribute('data-is-selected') === 'true')
+                                                return true;
+                                            const input = p.querySelector('input[type="radio"], input[type="checkbox"]');
+                                            if (input && input.checked)
+                                                return true;
+                                            p = p.parentElement;
+                                        }
                                     }
                                 }
+                                const summaryVisible = [...document.querySelectorAll('*')].some((el) => {
+                                    if (el.childNodes.length === 1 && el.childNodes[0].nodeType === Node.TEXT_NODE) {
+                                        const t = norm(el.textContent);
+                                        if (t === 'pay with netbanking' || t === 'netbanking')
+                                            return el.getBoundingClientRect().width > 0;
+                                    }
+                                    return false;
+                                });
+                                if (summaryVisible)
+                                    return true;
+                                const cb = document.querySelector('[role="combobox"]');
+                                if (cb && cb.getBoundingClientRect().width > 0)
+                                    return true;
+                                return false;
+                            }, undefined, 2500);
+                            if (isVerified === true) {
+                                netBankingVerified = true;
+                                break;
                             }
-                            catch (e) { }
-                            if (!verified)
-                                await new Promise(r => setTimeout(r, 300));
+                            const url = (currentPage.url() || '').toLowerCase();
+                            if (url.includes('netbanking') || url.includes('banktransfer')) {
+                                netBankingVerified = true;
+                                break;
+                            }
                         }
-                        netBankingVerified = verified;
-                        if (netBankingVerified)
-                            log(`✅ NetBanking selection verified`);
+                        catch (e) { }
+                        await new Promise(r => setTimeout(r, 300));
                     }
+                    if (netBankingVerified)
+                        log(`✅ NetBanking selection verified`);
                 }
-                catch (e) {
-                    warn(`⚠️ NetBanking click error: ${e.message}`);
-                }
-                await handle.dispose().catch(() => { });
             }
             if (!netBankingVerified && retry === 0)
                 await humanDelay(1000, 2000);
         }
         if (!netBankingVerified) {
-            warn(`⚠️ NetBanking option not found or verified — dumping visible options`);
+            warn(`❌ NetBanking option not found or verified — dumping visible options`);
             await dumpVisible('netbanking_not_verified');
-            log(`↩️ Falling back: will try clicking checkbox/radio NetBanking blocks directly...`);
-        }
-        // ── Step 2.5: Fallback — click any element whose lower text equals 'pay with netbanking' ──
-        if (!netBankingVerified) {
-            const frames = await getUsableFrames();
-            for (const { frame } of frames) {
-                try {
-                    const clicked = await safeEval(frame, () => {
-                        const isVis = (el) => el.isConnected && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0;
-                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                        const els = [...document.querySelectorAll('[role="option"], li, div, span, label')];
-                        for (const el of els) {
-                            const htmlEl = el;
-                            if (norm(htmlEl.childNodes && htmlEl.childNodes.length === 1 ? htmlEl.textContent : '') === 'pay with netbanking' && isVis(htmlEl)) {
-                                htmlEl.scrollIntoView({ block: 'center', behavior: 'instant' });
-                                htmlEl.click();
-                                return true;
-                            }
-                        }
-                        return false;
-                    }, undefined, 3500);
-                    if (clicked === true) {
-                        log(`✅ Clicked "Pay with NetBanking" (fallback path)`);
-                        netBankingVerified = true;
-                        await humanDelay(1500, 2500);
-                        break;
-                    }
-                }
-                catch (e) { }
-            }
+            return { status: 'failed', detail: 'netbanking option not found or verified' };
         }
         log(`✅ NetBanking section clicked`);
         await humanDelay(1500, 2500);
@@ -3785,11 +3888,13 @@ export class AccountVerifier {
         // ── Step 4: Click final Checkout / Agree and continue ──
         const checkoutTargets = ['checkout', 'agree and continue', 'agree & continue'];
         let checkoutClicked = false;
+        let checkoutPage = page;
         for (const target of checkoutTargets) {
             const found = await findClickableByText(target);
             if (!found)
                 continue;
             const { handle, frame, page: fp } = found;
+            checkoutPage = fp;
             try {
                 const info = await safeEval(frame, (node) => ({ tag: node.tagName.toLowerCase(), role: node.getAttribute('role') }), handle, 5000);
                 log(`🎯 Found checkout/agree button "${target}" | Page: ${fp.url()} | Frame: ${frame.url()} | Tag: ${info?.tag} | Role: ${info?.role}`);
@@ -3860,50 +3965,91 @@ export class AccountVerifier {
             await dumpVisible('checkout_button_not_found');
             return { status: 'failed', detail: 'checkout button not found' };
         }
-        // 10s wait for popup / checkout initialization
+        // ── Reference post-checkout popup handling (VERBATIM) ──
+        // 10 second delay for potential popup or checkout initialization
         log(`⏳ Waiting 10 seconds for potential popup or checkout initialization...`);
         await new Promise(r => setTimeout(r, 10000));
-        // Close popup pages
-        const pages = await browser.pages();
+        // Close any popup page that might have appeared
+        const popupPages = await browser.pages();
         let popupFound = false;
-        for (const p of pages) {
-            if (p !== page && !p.isClosed()) {
+        for (const p of popupPages) {
+            if (p !== page && p !== checkoutPage && !p.isClosed()) {
                 const url = p.url();
-                log(`📄 Closing popup page: ${url.substring(0, 120)}`);
+                log(`📄 Closing popup page: ${(url || '').substring(0, 120)}`);
                 await p.close().catch(() => { });
                 popupFound = true;
             }
         }
-        // Re-click checkout if popup was closed
+        // If a popup appeared and was closed, return to the checkout page and confirm the checkout
         if (popupFound) {
             log(`🔄 Popup was closed. Confirming checkout...`);
-            const frames = await getUsableFrames();
-            for (const { frame, page: fp } of frames) {
-                let reClicked = false;
-                for (const target of checkoutTargets) {
-                    const found = await findClickableByText(target);
-                    if (!found)
-                        continue;
-                    const { handle } = found;
-                    const el = handle.asElement();
-                    if (el) {
-                        try {
-                            await el.click();
-                            log(`🖱️ Re-clicked checkout/agree button "${target}" after popup was closed.`);
-                            reClicked = true;
+            let reCheckoutHandle = null;
+            const reCFramesInfo = await getUsableFrames();
+            for (const { frame } of reCFramesInfo) {
+                try {
+                    reCheckoutHandle = await safeEvalHandle(frame, () => {
+                        const isVis = (el) => {
+                            if (!el.isConnected)
+                                return false;
+                            const s = window.getComputedStyle(el);
+                            return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' &&
+                                !el.hasAttribute('hidden') && el.getAttribute('aria-hidden') !== 'true' &&
+                                (!el.disabled && !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true') &&
+                                !el.closest('[inert]') && el.getBoundingClientRect().width > 0;
+                        };
+                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+                        let n;
+                        while ((n = walker.nextNode())) {
+                            const nodeText = norm(n.nodeValue);
+                            if (nodeText === 'checkout' || nodeText === 'agree and continue' || nodeText === 'agree & continue') {
+                                let curr = n.parentElement;
+                                let clickable = null;
+                                while (curr && curr !== document.body) {
+                                    if (isVis(curr)) {
+                                        const tag = curr.tagName.toLowerCase();
+                                        const role = curr.getAttribute('role');
+                                        const tabIndex = curr.getAttribute('tabindex');
+                                        if (tag === 'button' || role === 'button' || (tag === 'a' && curr.hasAttribute('href')) ||
+                                            (tag === 'input' && (curr.type === 'button' || curr.type === 'submit')) ||
+                                            (tabIndex !== null && tabIndex !== '-1')) {
+                                            clickable = curr;
+                                            break;
+                                        }
+                                    }
+                                    curr = curr.parentElement;
+                                }
+                                if (clickable)
+                                    return clickable;
+                            }
                         }
-                        catch (e) {
-                            warn(`⚠️ Failed to re-click checkout/agree button: ${e.message}`);
-                        }
-                    }
-                    await handle.dispose().catch(() => { });
-                    if (reClicked)
+                        return null;
+                    }, undefined, 6000);
+                    if (reCheckoutHandle && reCheckoutHandle.asElement()) {
                         break;
+                    }
+                    else if (reCheckoutHandle) {
+                        await reCheckoutHandle.dispose().catch(() => { });
+                        reCheckoutHandle = null;
+                    }
                 }
-                if (reClicked)
-                    break;
+                catch (e) { }
             }
-            await new Promise(r => setTimeout(r, 5000));
+            if (reCheckoutHandle) {
+                const reEl = reCheckoutHandle.asElement();
+                try {
+                    await reEl.click();
+                    log(`🖱️ Re-clicked checkout/agree button after popup was closed.`);
+                }
+                catch (e) {
+                    warn(`⚠️ Failed to re-click checkout/agree button: ${e.message}`);
+                }
+                await reCheckoutHandle.dispose().catch(() => { });
+                await new Promise(r => setTimeout(r, 5000));
+            }
+            else {
+                warn(`⚠️ Checkout/agree button not found for re-clicking.`);
+            }
         }
         // ── Step 5: Monitor redirect to getupgrade ──
         log(`⏳ Monitoring redirection to getupgrade...`);
