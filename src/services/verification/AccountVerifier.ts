@@ -2312,11 +2312,12 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
                 await page.waitForFunction(
                     () => {
                         const txt = (document.body && document.body.innerText) || '';
-                        return /start\s+a\s+trial/i.test(txt) || /starter|business starter/i.test(txt);
+                        return /start\s+a\s+trial/i.test(txt) || /try\s+at\s+no\s+cost/i.test(txt) ||
+                            /starter|business starter/i.test(txt) || /compare\s+plans/i.test(txt);
                     },
                     { timeout: 20000 }
                 );
-                log(`✅ Plan page rendered (found "start a trial")`);
+                log(`✅ Plan page rendered (found trial/plan text)`);
             } catch (e) {
                 warn(`⚠️ Plan page load wait timed out`);
             }
@@ -2339,30 +2340,74 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
                 }
             } catch (e) { }
 
-            // 2c) Find + click "Start a trial" using native mouse
+            // Trial button matchers — must cover BOTH "Start a trial" AND
+            // "Try at no cost for 14 days" (current Google plan page).
+            const TRIAL_RE = /^(start\s+a\s+trial|start\s+your\s+free\s+trial|start\s+free\s+trial|begin\s+trial|start\s+trial|try\s+at\s+no\s+cost(\s+for\s+14\s+days)?|try\s+at\s+no\s+cost\s+for\s+[\d\s]*\s*days|activate\s+trial)$/i;
+            const TRIAL_SUBSTR = ['start a trial', 'start your free trial', 'start free trial', 'begin trial', 'start trial', 'try at no cost', 'try at no cost for 14 days', 'activate trial'];
+
+            // 2c) Find + click the trial button using native mouse
             let started = false;
-            const trialTexts = ['Start a trial', 'Start your free trial', 'Start free trial', 'Begin trial', 'Start trial'];
             for (let attempt = 1; attempt <= 3 && !started; attempt++) {
+                let foundTrialBtn: any = null;
+                let foundTrialText = '';
                 try {
                     const allBtns = await page.$$('button, a, [role="button"], span');
                     for (const btn of allBtns) {
                         const txt = await btn.evaluate((el: any) => (el.textContent || '').replace(/\s+/g, ' ').trim()).catch(() => '');
-                        if (/^start\s+a\s+trial$/i.test(txt) || txt.toLowerCase() === 'start a trial') {
+                        if (TRIAL_RE.test(txt) || TRIAL_SUBSTR.some(v => txt.toLowerCase() === v || txt.toLowerCase().includes(v))) {
                             const box = await btn.boundingBox();
-                            if (box && box.width > 0 && box.height > 0) {
-                                await btn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' })).catch(() => { });
-                                await humanDelay(300, 600);
-                                const freshBox = await btn.boundingBox();
-                                if (freshBox) {
-                                    const cx = freshBox.x + freshBox.width / 2;
-                                    const cy = freshBox.y + freshBox.height / 2;
-                                    await page.mouse.move(cx, cy, { steps: 5 });
-                                    await humanDelay(80, 160);
-                                    await page.mouse.click(cx, cy, { delay: Math.random() * 60 + 40 });
-                                    started = true;
-                                    log(`▶️ Start trial clicked via native mouse at (${cx.toFixed(0)}, ${cy.toFixed(0)}) text="${txt}"`);
-                                    break;
+                            if (box && box.width > 40 && box.height > 20) {
+                                foundTrialBtn = btn;
+                                foundTrialText = txt;
+                                break;
+                            }
+                        }
+                    }
+                    if (!foundTrialBtn) {
+                        // Also scan <div>/<section> clickable cards (Google uses card-style plan buttons)
+                        const frameList = await getUsableFrames();
+                        for (const { frame } of frameList) {
+                            const elHandle = await safeEvalHandle(frame, () => {
+                                const vals = ['start a trial', 'your free trial', 'free trial', 'begin trial', 'start trial', 'try at no cost', 'try it free'];
+                                const els = Array.from(document.querySelectorAll('[role="button"], div[tabindex], button, a, span')) as HTMLElement[];
+                                for (const e of els) {
+                                    const t = (e.textContent || '').replace(/\s+/g, ' ').trim();
+                                    if (t.length > 5 && t.length < 60) {
+                                        const tl = t.toLowerCase();
+                                        if (vals.some(v => tl === v || tl.includes(v))) {
+                                            const r = e.getBoundingClientRect();
+                                            if (r.width > 40 && r.height > 20) { e.click(); return t; }
+                                        }
+                                    }
                                 }
+                                return null;
+                            });
+                            const asEl = elHandle ? elHandle.asElement() : null;
+                            const val = elHandle ? await elHandle.jsonValue().catch(() => null) : null;
+                            if (asEl && val) {
+                                started = true;
+                                log(`▶️ Trial button clicked (frame-scan fallback): "${val}"`);
+                                await humanDelay(2000, 3000);
+                            }
+                            if (elHandle) await elHandle.dispose().catch(() => { });
+                            if (started) break;
+                        }
+                    }
+                    if (foundTrialBtn && !started) {
+                        const box = await foundTrialBtn.boundingBox();
+                        if (box && box.width > 0 && box.height > 0) {
+                            await foundTrialBtn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' })).catch(() => { });
+                            await humanDelay(300, 600);
+                            const freshBox = await foundTrialBtn.boundingBox();
+                            if (freshBox) {
+                                const cx = freshBox.x + freshBox.width / 2;
+                                const cy = freshBox.y + freshBox.height / 2;
+                                await page.mouse.move(cx, cy, { steps: 5 });
+                                await humanDelay(80, 160);
+                                await page.mouse.click(cx, cy, { delay: Math.random() * 60 + 40 });
+                                started = true;
+                                log(`▶️ Trial/plan button clicked via native mouse at (${cx.toFixed(0)}, ${cy.toFixed(0)}) text="${foundTrialText}"`);
+                                break;
                             }
                         }
                     }
@@ -2370,46 +2415,46 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
                     warn(`⚠️ Start trial attempt ${attempt} error: ${e.message}`);
                 }
                 if (!started && attempt < 3) {
-                    warn(`⚠️ Start trial attempt ${attempt}/3 failed, retrying...`);
+                    warn(`⚠️ Trial button attempt ${attempt}/3 failed, retrying...`);
                     await humanDelay(1500, 2500);
                 }
             }
 
-            // 2d) Fallback: click by any trial-ish text
+            // 2d) Fallback: click by any trial-ish text across all pages/frames
             if (!started) {
                 warn(`⚠️ Native click failed, falling back to text-based trial click`);
                 const frames = await getUsableFrames();
-                for (const { frame } of frames) {
+                for (const { frame, page: fp } of frames) {
                     try {
-                        const el = await frame.evaluateHandle(() => {
-                            const vals = ['start a trial', 'start your free trial', 'start free trial', 'begin trial', 'start trial'];
-                            const els = Array.from(document.querySelectorAll('button, a, [role="button"], span, div[tabindex]')) as HTMLElement[];
+                        const clicked = await safeEval(frame, () => {
+                            const vals = ['start a trial', 'start your free trial', 'start free trial', 'begin trial', 'start trial', 'try at no cost for 14 days', 'try at no cost', 'activate trial', 'start'];
+                            const els = Array.from(document.querySelectorAll('button, a, [role="button"], span, div[tabindex], li')) as HTMLElement[];
                             for (const e of els) {
-                                const t = (e.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                                if (vals.includes(t) || vals.some(v => t.includes(v))) {
+                                const t = (e.textContent || '').replace(/\s+/g, ' ').trim();
+                                if (t.length < 2 || t.length > 60) continue;
+                                const tl = t.toLowerCase();
+                                if (vals.some(v => tl === v || tl.includes(v))) {
                                     const r = e.getBoundingClientRect();
-                                    if (r.width > 0 && r.height > 0) { e.click(); return true; }
+                                    if (r.width > 0 && r.height > 0) { e.scrollIntoView({ block: 'center', behavior: 'instant' }); e.click(); return t; }
                                 }
                             }
-                            return false;
-                        }).catch(() => null);
-                        const asEl = el ? el.asElement() : null;
-                        if (asEl && (await el?.jsonValue().catch(() => false))) {
+                            return null;
+                        }, undefined, 5000);
+                        if (clicked) {
                             started = true;
-                            log(`▶️ Start trial clicked via text fallback`);
-                            if (el) await el.dispose().catch(() => { });
+                            log(`▶️ Start trial clicked via text fallback on page ${fp.url().substring(0, 80)}: "${clicked}"`);
+                            await humanDelay(2000, 3000);
                             break;
                         }
-                        if (el) await el.dispose().catch(() => { });
                     } catch (e) { }
                 }
             }
 
             if (!started) {
-                warn(`❌ Start trial could not be clicked — dumping visible buttons`);
+                warn(`❌ Trial button could not be clicked — dumping visible buttons`);
                 await dumpVisible('start_trial_failed');
             } else {
-                log(`✅ Start trial clicked`);
+                log(`✅ Trial button clicked`);
             }
 
             // ── Step 3: Wait for payment page contact section to load (past "Verifying...") ──
@@ -2646,34 +2691,51 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
             log(`ℹ️ No address inputs visible — looking for Add/Edit trigger in frames`);
             let triggered = false;
             const frames3 = await getUsableFrames();
-            for (const { frame } of frames3) {
+            for (const { frame, page: fp } of frames3) {
                 try {
+                    // Strategy A: find "add name and address" / "add name" / "add address"
+                    // / "edit address" / "change" trigger in ANY frame, heading or not.
                     triggered = await safeEval(frame, () => {
+                        const clickables = [...document.querySelectorAll('button, a, [role="button"], [tabindex="0"], div, span, .goog-link, [data-tooltip]')];
+                        for (const el of clickables) {
+                            const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+                            if (/^(add name and address|add name|add address|edit address|edit|change|add|\+)$/i.test(t) ||
+                                /add name|add address|edit address/i.test(t)) {
+                                const rect = el.getBoundingClientRect();
+                                if (rect.width > 0 && rect.height > 0) {
+                                    (el as HTMLElement).scrollIntoView({ block: 'center', behavior: 'instant' });
+                                    (el as HTMLElement).click();
+                                    return true;
+                                }
+                            }
+                        }
+                        // Strategy B: find heading container then nested clickable
                         const allEls = [...document.querySelectorAll('*')];
                         let headingEl: any = null;
                         for (const el of allEls) {
                             const t = (el.childNodes.length <= 3 ? el.textContent || '' : '').trim();
-                            if (/^contact information$/i.test(t) && el.getBoundingClientRect().width > 0) { headingEl = el; break; }
+                            if ((/^contact information$/i.test(t) || /^billing address$/i.test(t) || /^address$/i.test(t)) && el.getBoundingClientRect().width > 0) { headingEl = el; break; }
                         }
-                        if (!headingEl) return false;
-                        let container: any = headingEl;
-                        for (let i = 0; i < 8 && container.parentElement; i++) container = container.parentElement;
-                        const clickables = [...container.querySelectorAll('button, a, [role="button"], [tabindex="0"]')];
-                        for (const el of clickables) {
-                            const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-                            if (/^(add|edit|change|\+)$/i.test(t) || /add name|add address|edit address/i.test(t)) {
-                                const rect = el.getBoundingClientRect();
-                                if (rect.width > 0 && rect.height > 0) {
-                                    el.scrollIntoView({ block: 'center', behavior: 'instant' });
-                                    el.click();
-                                    return true;
+                        if (headingEl) {
+                            let container: any = headingEl;
+                            for (let i = 0; i < 10 && container.parentElement; i++) container = container.parentElement;
+                            const inner = [...container.querySelectorAll('button, a, [role="button"], [tabindex="0"], div, span')];
+                            for (const el of inner) {
+                                const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+                                if (/^(add|edit|change|\+)$/i.test(t) || /add name|add address|edit address/i.test(t)) {
+                                    const rect = el.getBoundingClientRect();
+                                    if (rect.width > 0 && rect.height > 0) {
+                                        el.scrollIntoView({ block: 'center', behavior: 'instant' });
+                                        el.click();
+                                        return true;
+                                    }
                                 }
                             }
                         }
                         return false;
                     }, undefined, 3500);
                     if (triggered === true) {
-                        log(`✅ Triggered Contact information section open in frame`);
+                        log(`✅ Triggered "Add name and address" / address form open (page=${fp.url().substring(0, 80)})`);
                         await humanDelay(2000, 3000);
                         break;
                     }
@@ -2924,10 +2986,33 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
                 return false;
             };
             const stillHasInputs = await checkInputsVisible();
-            if (!stillHasInputs) {
+            const anyFieldFilled = streetFilled || cityFilled || pinFilled || stateFilled;
+            if (!stillHasInputs && anyFieldFilled) {
                 log(`🎉 Address form saved and closed successfully!`);
                 addressSaved = true;
                 break;
+            } else if (!anyFieldFilled) {
+                warn(`⚠️ No address input was found/filled — the "Add name and address" trigger likely never opened. Re-triggering...`);
+                await humanDelay(1000, 1500);
+                // Re-attempt the trigger (Strategy A: click "add name and address" directly)
+                const trg = await getUsableFrames();
+                for (const { frame } of trg) {
+                    try {
+                        const t2 = await safeEval(frame, () => {
+                            const clickables = [...document.querySelectorAll('button, a, [role="button"], [tabindex="0"], div, span')];
+                            for (const el of clickables) {
+                                const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+                                if (/^(add name and address|add name|add address)$/i.test(t)) {
+                                    const rect = el.getBoundingClientRect();
+                                    if (rect.width > 0 && rect.height > 0) { (el as HTMLElement).scrollIntoView({ block: 'center', behavior: 'instant' }); (el as HTMLElement).click(); return t; }
+                                }
+                            }
+                            return null;
+                        }, undefined, 3500);
+                        if (t2) { log(`✅ Re-clicked "Add name and address" trigger: "${t2}"`); break; }
+                    } catch (e) { }
+                }
+                await humanDelay(1500, 2500);
             } else {
                 warn(`⚠️ Address form is still open. Checking for errors or trying to save again...`);
                 await humanDelay(1500, 2500);
