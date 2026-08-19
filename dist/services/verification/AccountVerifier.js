@@ -2336,7 +2336,7 @@ export class AccountVerifier {
                             if (el.closest('[inert]'))
                                 return false;
                             const r = el.getBoundingClientRect();
-                            return r.width > 0 && r.height > 0 && r.bottom >= 0 && r.right >= 0 && r.top <= window.innerHeight && r.left <= window.innerWidth;
+                            return r.width > 0 && r.height > 0;
                         };
                         const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
                         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
@@ -3743,6 +3743,55 @@ export class AccountVerifier {
             await handle.dispose().catch(() => { });
             if (checkoutClicked)
                 break;
+        }
+        if (!checkoutClicked) {
+            log(`⚠️ Checkout/agree walker miss — trying direct DOM text scan across all frames...`);
+            const coFrames = await getUsableFrames();
+            outer: for (const { frame } of coFrames) {
+                try {
+                    const clicked = await safeEval(frame, (tgts) => {
+                        const isVis = (el) => el.isConnected && el.getBoundingClientRect().width > 0;
+                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        // Prefer leaf-level elements whose text IS the target (avoid big containers).
+                        const els = [...document.querySelectorAll('button, a, [role="button"], [role="option"], li div, [role="listbox"] *, div, span')];
+                        let best = null;
+                        for (const el of els) {
+                            const t = norm(el.textContent);
+                            if (!tgts.some((target) => t === target || t.startsWith(target + ' ')))
+                                continue;
+                            if (!isVis(el))
+                                continue;
+                            if ([...el.children].some((c) => isVis(c) && tgts.some((target) => norm(c.textContent) === target)))
+                                continue;
+                            if (!best || el.textContent.length < best.textContent.length)
+                                best = el;
+                        }
+                        if (best) {
+                            best.scrollIntoView({ block: 'center', behavior: 'instant' });
+                            best.click();
+                            return true;
+                        }
+                        // Fallback: any visible element whose DIRECT text matches.
+                        for (const el of els) {
+                            if (!isVis(el) || el.children.length)
+                                continue;
+                            const t = norm(el.textContent);
+                            if (tgts.some((target) => t === target || t.startsWith(target + ' '))) {
+                                el.scrollIntoView({ block: 'center', behavior: 'instant' });
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }, checkoutTargets, 4000);
+                    if (clicked === true) {
+                        log(`✅ Checkout/agree clicked via direct DOM text scan`);
+                        checkoutClicked = true;
+                        break outer;
+                    }
+                }
+                catch (e) { }
+            }
         }
         if (!checkoutClicked) {
             warn(`⚠️ Checkout/agree button NOT found — dumping visible elements`);
