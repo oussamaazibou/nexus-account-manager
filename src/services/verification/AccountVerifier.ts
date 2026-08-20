@@ -3419,7 +3419,7 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
         }
 
         log(`✅ NetBanking section clicked`);
-        await humanDelay(1500, 2500);
+        await humanDelay(3000, 5000);
 
         // ── Step 3: Pick a bank inside frames ──
         // VERBATIM port of the reference's bank loop:
@@ -3496,7 +3496,7 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
                 for (const el of dropdowns) {
                     let matched = false;
                     try {
-                        matched = await el.evaluate((input: any, keywords: string[]) => {
+                        matched = await safeEval(el, (input: any, keywords: string[]) => {
                             const getVisibleText = (node: any) => (node.textContent || node.innerText || '').trim().toLowerCase();
                             const attrs = [input.getAttribute('placeholder'), input.getAttribute('aria-label'), input.getAttribute('name'), input.id, input.className, input.tagName].map((a: any) => (a || '').toLowerCase());
                             const matchesDirect = keywords.some(ph => {
@@ -3615,37 +3615,37 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
         }
 
         if (hasBankDropdown) {
-        for (const bank of banks) {
-            const frames = await getUsableFrames();
-            for (const { frame, page: pageForMouse } of frames) {
-                bankSelected = await selectFromComboboxOrSelectInFrame(frame, pageForMouse, bank);
-                if (bankSelected) { bankChosen = bank; break; }
-                // Direct exact-text scan (reference) — radio rows / option rows.
-                try {
-                    const allBtns = await q$$(frame, 'button, a, [role="option"], [role="radio"], li, div, span');
-                    for (const btn of allBtns) {
-                        const txt = await btn.evaluate((el: any) => (el.textContent || '').replace(/\s+/g, ' ').trim()).catch(() => '');
-                        if (txt.toLowerCase() === bank.toLowerCase()) {
-                            const box = await btn.boundingBox();
-                            if (box && box.width > 0 && box.height > 0) {
-                                await btn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' })).catch(() => { });
-                                await humanDelay(150, 250);
-                                try { await btn.click(); } catch (clickErr) { await btn.evaluate((el: any) => el.click()); }
-                                bankSelected = true; bankChosen = bank; break;
+            for (const bank of banks) {
+                const frames = await getUsableFrames();
+                for (const { frame, page: pageForMouse } of frames) {
+                    bankSelected = await selectFromComboboxOrSelectInFrame(frame, pageForMouse, bank);
+                    if (bankSelected) { bankChosen = bank; break; }
+                    // Direct exact-text scan (reference) — radio rows / option rows.
+                    try {
+                        const allBtns = await q$$(frame, 'button, a, [role="option"], [role="radio"], li, div, span');
+                        for (const btn of allBtns) {
+                            const txt = await btn.evaluate((el: any) => (el.textContent || '').replace(/\s+/g, ' ').trim()).catch(() => '');
+                            if (txt.toLowerCase() === bank.toLowerCase()) {
+                                const box = await btn.boundingBox();
+                                if (box && box.width > 0 && box.height > 0) {
+                                    await btn.evaluate((el: any) => el.scrollIntoView({ block: 'center', behavior: 'instant' })).catch(() => { });
+                                    await humanDelay(150, 250);
+                                    try { await btn.click(); } catch (clickErr) { await btn.evaluate((el: any) => el.click()); }
+                                    bankSelected = true; bankChosen = bank; break;
+                                }
                             }
+                            await btn.dispose().catch(() => { });
                         }
-                        await btn.dispose().catch(() => { });
-                    }
-                } catch (e) { }
+                    } catch (e) { }
+                    if (bankSelected) break;
+                }
                 if (bankSelected) break;
             }
-            if (bankSelected) break;
-        }
         } // end if (hasBankDropdown)
         if (!hasBankDropdown) log(`ℹ️ No bank dropdown found in any frame — skipping bank selection`);
 
         log(bankSelected ? `🏦 Bank selected: ${bankChosen}` : `⚠️ No bank could be auto-selected`);
-        await humanDelay(1500, 2500);
+        await humanDelay(2000, 3500);
 
         // ── Step 3.5: Click Save / Add payment method ──
         let paymentSaved = false;
@@ -3687,7 +3687,7 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
             } catch (e) { }
             if (paymentSaved) break;
         }
-        if (paymentSaved) await humanDelay(2000, 3000);
+        if (paymentSaved) await humanDelay(3000, 5000);
 
         // ── Step 4: Click final Checkout / Agree and continue ──
         const checkoutTargets = ['checkout', 'agree and continue', 'agree & continue'];
@@ -3762,95 +3762,72 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
             return { status: 'failed', detail: 'checkout button not found' };
         }
 
-        // ── Step 4b: 10 second delay after clicking checkout button for potential popup ──
-        log(`⏳ Waiting 10 seconds for potential popup or checkout initialization...`);
-        await new Promise(r => setTimeout(r, 10000));
+        // ── Step 4b: Wait for payment popup (pay.billdesk.com / liftoff / fusionweb), close it, and wait for automatic checkout execution ──
+        log(`⏳ Waiting for payment popup (pay.billdesk.com) to load...`);
+        let popupPage: any = null;
 
-        // ── Step 4c: Close any popup page that might have appeared (e.g. BillDesk netbankingredirect or Google liftoff) ──
-        const pages = await browser.pages();
-        let popupFound = false;
-        for (const p of pages) {
-            if (p !== page && p !== checkoutPage && !p.isClosed()) {
-                const url = p.url();
-                log(`📄 Closing popup page: ${url}`);
-                await p.close().catch(() => { });
-                popupFound = true;
-            }
-        }
-
-        // ── Step 4d: If a popup appeared and was closed, return to checkout page and re-confirm checkout ──
-        if (popupFound) {
-            log(`🔄 Popup was closed. Confirming checkout...`);
-            let reCheckoutHandle: any = null;
-            const reCFramesInfo = await getUsableFrames();
-            for (const { frame } of reCFramesInfo) {
-                try {
-                    reCheckoutHandle = await safeEvalHandle(frame, () => {
-                        const isVis = (el: any) => {
-                            if (!el.isConnected) return false;
-                            const s = window.getComputedStyle(el);
-                            return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' &&
-                                   !el.hasAttribute('hidden') && el.getAttribute('aria-hidden') !== 'true' &&
-                                   (!el.disabled && !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true') &&
-                                   !el.closest('[inert]') && el.getBoundingClientRect().width > 0;
-                        };
-                        const norm = (t: any) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null) as any;
-                        let n: any;
-                        while ((n = walker.nextNode())) {
-                            const nodeText = norm(n.nodeValue);
-                            if (nodeText === 'checkout' || nodeText === 'agree and continue' || nodeText === 'agree & continue') {
-                                let curr = n.parentElement;
-                                let clickable: any = null;
-                                while (curr && curr !== document.body) {
-                                    if (isVis(curr)) {
-                                        const tag = curr.tagName.toLowerCase();
-                                        const role = curr.getAttribute('role');
-                                        const tabIndex = curr.getAttribute('tabindex');
-                                        if (tag === 'button' || role === 'button' || (tag === 'a' && curr.hasAttribute('href')) ||
-                                            (tag === 'input' && (curr.type === 'button' || curr.type === 'submit')) ||
-                                            (tabIndex !== null && tabIndex !== '-1')) {
-                                            clickable = curr;
-                                            break;
-                                        }
-                                    }
-                                    curr = curr.parentElement;
-                                }
-                                if (clickable) return clickable;
-                            }
-                        }
-                        return null;
-                    }, undefined, 6000);
-
-                    if (reCheckoutHandle && reCheckoutHandle.asElement()) {
+        const popupStartTime = Date.now();
+        while (Date.now() - popupStartTime < 25000) {
+            const allPages = await browser.pages();
+            for (const p of allPages) {
+                if (p !== page && p !== checkoutPage && !p.isClosed()) {
+                    const u = (p.url() || '').toLowerCase();
+                    if (u && u !== 'about:blank' && u !== 'about:srcdoc') {
+                        popupPage = p;
                         break;
-                    } else if (reCheckoutHandle) {
-                        await reCheckoutHandle.dispose().catch(() => { });
-                        reCheckoutHandle = null;
                     }
-                } catch (e) { }
-            }
-
-            if (reCheckoutHandle) {
-                const reEl = reCheckoutHandle.asElement();
-                try {
-                    await reEl.click();
-                    log(`🖱️ Re-clicked checkout/agree button after popup was closed.`);
-                } catch (e: any) {
-                    warn(`⚠️ Failed to re-click checkout/agree button: ${e.message}`);
                 }
-                await reCheckoutHandle.dispose().catch(() => { });
-                await new Promise(r => setTimeout(r, 5000));
-            } else {
-                warn(`⚠️ Checkout/agree button not found for re-clicking.`);
+            }
+            if (popupPage) break;
+            if (allPages.length > 1) {
+                for (const p of allPages) {
+                    if (p !== page && p !== checkoutPage && !p.isClosed()) {
+                        popupPage = p;
+                        break;
+                    }
+                }
+            }
+            if (popupPage) break;
+            await new Promise(r => setTimeout(r, 500));
+        }
+
+        if (popupPage) {
+            // Wait up to 15s for the popup to navigate to the real BillDesk redirect URL if currently on about:blank
+            const navStartTime = Date.now();
+            while (Date.now() - navStartTime < 15000) {
+                try {
+                    const u = (popupPage.url() || '').toLowerCase();
+                    if (u && u !== 'about:blank' && u !== 'about:srcdoc') {
+                        log(`📄 Payment popup loaded URL: ${u.substring(0, 120)}`);
+                        break;
+                    }
+                } catch (e) { break; }
+                await new Promise(r => setTimeout(r, 500));
+            }
+            const popupUrl = (popupPage.url() || 'unknown').substring(0, 120);
+            log(`📄 Closing payment popup: ${popupUrl}`);
+            await popupPage.close().catch(() => { });
+        } else {
+            log(`ℹ️ No separate payment popup detected — checking all pages...`);
+            const pages = await browser.pages();
+            for (const p of pages) {
+                if (p !== page && p !== checkoutPage && !p.isClosed()) {
+                    const u = p.url();
+                    log(`📄 Closing stale popup page: ${u}`);
+                    await p.close().catch(() => { });
+                }
             }
         }
+
+        // Delay timing after closing the pop-up page (allowing Google to automatically process checkout)
+        log(`⏳ Delay timing after closing payment popup — waiting for automatic checkout execution...`);
+        await humanDelay(6000, 10000);
 
         // ── Step 5: Monitor redirection to getupgrade or admin ──
         log(`⏳ Monitoring redirection to getupgrade/admin...`);
         let reachedGetUpgrade = false;
         const startMonitorTime = Date.now();
-        while (Date.now() - startMonitorTime < 25000) {
+        while (Date.now() - startMonitorTime < 35000) {
             const currentUrl = page.url();
             log(`🔗 Current URL: ${currentUrl}`);
             if (currentUrl.includes('getupgrade') || currentUrl.includes('admin.google.com')) {
