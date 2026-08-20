@@ -4047,109 +4047,110 @@ export class AccountVerifier {
             await dumpVisible('checkout_button_not_found');
             return { status: 'failed', detail: 'checkout button not found' };
         }
-        // ── Reference post-checkout popup handling (VERBATIM) ──
-        // 10 second delay for potential popup or checkout initialization
-        log(`⏳ Waiting 10 seconds for potential popup or checkout initialization...`);
-        await new Promise(r => setTimeout(r, 10000));
-        // Close any popup page that might have appeared
-        const popupPages = await browser.pages();
-        let popupFound = false;
-        for (const p of popupPages) {
-            if (p !== page && p !== checkoutPage && !p.isClosed()) {
-                const url = p.url();
-                log(`📄 Closing popup page: ${(url || '').substring(0, 120)}`);
-                await p.close().catch(() => { });
-                popupFound = true;
-            }
-        }
-        // If a popup appeared and was closed, return to the checkout page and confirm the checkout
-        if (popupFound) {
-            log(`🔄 Popup was closed. Confirming checkout...`);
-            let reCheckoutHandle = null;
-            const reCFramesInfo = await getUsableFrames();
-            for (const { frame } of reCFramesInfo) {
-                try {
-                    reCheckoutHandle = await safeEvalHandle(frame, () => {
-                        const isVis = (el) => {
-                            if (!el.isConnected)
-                                return false;
-                            const s = window.getComputedStyle(el);
-                            return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' &&
-                                !el.hasAttribute('hidden') && el.getAttribute('aria-hidden') !== 'true' &&
-                                (!el.disabled && !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true') &&
-                                !el.closest('[inert]') && el.getBoundingClientRect().width > 0;
-                        };
-                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-                        let n;
-                        while ((n = walker.nextNode())) {
-                            const nodeText = norm(n.nodeValue);
-                            if (nodeText === 'checkout' || nodeText === 'agree and continue' || nodeText === 'agree & continue') {
-                                let curr = n.parentElement;
-                                let clickable = null;
-                                while (curr && curr !== document.body) {
-                                    if (isVis(curr)) {
-                                        const tag = curr.tagName.toLowerCase();
-                                        const role = curr.getAttribute('role');
-                                        const tabIndex = curr.getAttribute('tabindex');
-                                        if (tag === 'button' || role === 'button' || (tag === 'a' && curr.hasAttribute('href')) ||
-                                            (tag === 'input' && (curr.type === 'button' || curr.type === 'submit')) ||
-                                            (tabIndex !== null && tabIndex !== '-1')) {
-                                            clickable = curr;
-                                            break;
-                                        }
-                                    }
-                                    curr = curr.parentElement;
-                                }
-                                if (clickable)
-                                    return clickable;
-                            }
+        // ── Step 4b: Wait for payment popup (liftoff), close it, wait for redirect ──
+        // After clicking checkout, Google opens a popup at
+        // https://payments.google.com/gp/w/u/0/liftoff to process the payment.
+        // The popup starts as about:blank then navigates to liftoff. We must wait
+        // for it to load its real URL, then close it, and only THEN will the main
+        // page redirect to getupgrade or admin.
+        log(`⏳ Waiting for payment popup to appear...`);
+        let paymentPopupClosed = false;
+        {
+            const prePopupPages = await browser.pages();
+            const prePopupCount = prePopupPages.length;
+            // Poll for up to 30s for a new page to appear
+            const popupStart = Date.now();
+            let popupPage = null;
+            while (Date.now() - popupStart < 30000) {
+                const allPages = await browser.pages();
+                for (const p of allPages) {
+                    if (p !== page && p !== checkoutPage && !p.isClosed()) {
+                        const u = (p.url() || '').toLowerCase();
+                        // Found a real popup (not about:blank)
+                        if (u && u !== 'about:blank' && u !== 'about:srcdoc') {
+                            popupPage = p;
+                            break;
                         }
-                        return null;
-                    }, undefined, 6000);
-                    if (reCheckoutHandle && reCheckoutHandle.asElement()) {
+                    }
+                }
+                if (popupPage)
+                    break;
+                // Also accept about:blank if a NEW page appeared (popup was just created)
+                if (allPages.length > prePopupCount) {
+                    for (const p of allPages) {
+                        if (p !== page && p !== checkoutPage && !p.isClosed()) {
+                            popupPage = p;
+                            break;
+                        }
+                    }
+                }
+                if (popupPage)
+                    break;
+                await new Promise(r => setTimeout(r, 500));
+            }
+            if (popupPage) {
+                // Wait for it to navigate away from about:blank (up to 20s)
+                const navStart = Date.now();
+                while (Date.now() - navStart < 20000) {
+                    try {
+                        const u = (popupPage.url() || '').toLowerCase();
+                        if (u && u !== 'about:blank' && u !== 'about:srcdoc') {
+                            log(`📄 Payment popup loaded: ${u.substring(0, 120)}`);
+                            break;
+                        }
+                    }
+                    catch (e) {
                         break;
                     }
-                    else if (reCheckoutHandle) {
-                        await reCheckoutHandle.dispose().catch(() => { });
-                        reCheckoutHandle = null;
-                    }
+                    await new Promise(r => setTimeout(r, 500));
                 }
-                catch (e) { }
-            }
-            if (reCheckoutHandle) {
-                const reEl = reCheckoutHandle.asElement();
-                try {
-                    await reEl.click();
-                    log(`🖱️ Re-clicked checkout/agree button after popup was closed.`);
-                }
-                catch (e) {
-                    warn(`⚠️ Failed to re-click checkout/agree button: ${e.message}`);
-                }
-                await reCheckoutHandle.dispose().catch(() => { });
-                await new Promise(r => setTimeout(r, 5000));
+                // Close the payment popup
+                const finalUrl = popupPage.url() || 'unknown';
+                log(`📄 Closing payment popup: ${finalUrl.substring(0, 120)}`);
+                await popupPage.close().catch(() => { });
+                paymentPopupClosed = true;
+                // Give the main page a moment to process the popup closure
+                await new Promise(r => setTimeout(r, 2000));
             }
             else {
-                warn(`⚠️ Checkout/agree button not found for re-clicking.`);
+                log(`ℹ️ No payment popup detected — checking for any stale popups`);
+                const anyPages = await browser.pages();
+                for (const p of anyPages) {
+                    if (p !== page && p !== checkoutPage && !p.isClosed()) {
+                        const u = (p.url() || '').toLowerCase();
+                        log(`📄 Closing stale popup: ${u.substring(0, 120)}`);
+                        await p.close().catch(() => { });
+                        paymentPopupClosed = true;
+                    }
+                }
             }
         }
-        // ── Step 5: Monitor redirect to getupgrade ──
-        log(`⏳ Monitoring redirection to getupgrade...`);
-        const startMonitorTime = Date.now();
-        while (Date.now() - startMonitorTime < 25000) {
+        // ── Step 5: Wait for main page to redirect to getupgrade or admin ──
+        log(`⏳ Waiting for redirect to getupgrade/admin after checkout...`);
+        const redirectStart = Date.now();
+        while (Date.now() - redirectStart < 45000) {
             const currentUrl = page.url();
-            log(`🔗 Current URL: ${currentUrl}`);
-            if (currentUrl.includes('getupgrade'))
-                break;
-            const isExpectedPage = currentUrl.includes('checkout') || currentUrl.includes('admin.google.com') || currentUrl.includes('accounts.google.com') || currentUrl === 'about:blank';
-            if (!isExpectedPage && !currentUrl.includes('getupgrade')) {
-                log(`⚠️ Unexpected automatic redirect: ${currentUrl} (continuing)`);
+            if (currentUrl.includes('getupgrade') || currentUrl.includes('admin.google.com')) {
+                log(`✅ Redirected to: ${currentUrl.substring(0, 120)}`);
                 break;
             }
+            // Also check all pages in case the main page navigated
+            const allPages = await browser.pages();
+            for (const p of allPages) {
+                if (!p.isClosed()) {
+                    const u = (p.url() || '').toLowerCase();
+                    if (u.includes('getupgrade') || u.includes('admin.google.com')) {
+                        log(`✅ Found target URL on another page: ${u.substring(0, 120)}`);
+                        break;
+                    }
+                }
+            }
+            if (page.url().includes('getupgrade') || page.url().includes('admin.google.com'))
+                break;
             await new Promise(r => setTimeout(r, 1000));
         }
-        if (!page.url().includes('getupgrade')) {
-            warn(`⚠️ Did not redirect automatically to getupgrade. Navigating manually...`);
+        if (!page.url().includes('getupgrade') && !page.url().includes('admin.google.com')) {
+            warn(`⚠️ Did not redirect to getupgrade/admin. Navigating manually...`);
             try {
                 await page.goto('https://workspace.google.com/u/0/getupgrade', { waitUntil: 'domcontentloaded', timeout: 30000 });
                 log(`🧭 Navigated manually to getupgrade. Current URL: ${page.url()}`);
