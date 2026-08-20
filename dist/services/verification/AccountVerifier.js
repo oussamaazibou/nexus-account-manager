@@ -3495,20 +3495,20 @@ export class AccountVerifier {
                         await new Promise(r => setTimeout(r, 250));
                     }
                     if (listOpened)
-                        log(`âœ… Payment method list confirmed open`);
+                        log(`✅ Payment method list confirmed open`);
                 }
             }
             if (!listOpened && retry === 0) {
-                warn(`âš ï¸ Payment list did not open. Retrying...`);
+                warn(`⚠️ Payment list did not open. Retrying...`);
                 await humanDelay(1000, 2000);
             }
         }
         if (!listOpened) {
-            warn(`âŒ Payment method dialog did not open â€” dumping visible elements`);
+            warn(`❌ Payment method dialog did not open — dumping visible elements`);
             await dumpVisible('payment_list_not_opened');
             return { status: 'failed', detail: 'payment method dialog did not open' };
         }
-        // â”€â”€ Step 2: Click "Pay with NetBanking" + verify (VERBATIM reference) â”€â”€
+        // ── Step 2: Click "Pay with NetBanking" + verify (VERBATIM reference) ──
         let netBankingVerified = false;
         for (let retry = 0; retry < 2 && !netBankingVerified; retry++) {
             let nbClicked = false;
@@ -3559,11 +3559,6 @@ export class AccountVerifier {
                         const info = await safeEval(frame, (node) => ({
                             tag: node.tagName.toLowerCase(), role: node.getAttribute('role'), selected: node.getAttribute('aria-selected')
                         }), clickTargetHandle, 5000);
-                        log(`ðŸŽ¯ Found "Pay with NetBanking" | Page: ${page.url()} | Frame: ${frame.url()} | Tag: ${info?.tag} | Role: ${info?.role} | Selected: ${info?.selected}`);
-                        await safeEval(frame, (node) => node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }), clickTargetHandle, 5000);
-                        currentFrame = frame;
-                        currentPage = page;
-                        break;
                     }
                     else {
                         if (clickTargetHandle)
@@ -3668,21 +3663,84 @@ export class AccountVerifier {
             await dumpVisible('netbanking_not_verified');
             return { status: 'failed', detail: 'netbanking option not found or verified' };
         }
-        log(`âœ… NetBanking section clicked`);
-        await humanDelay(2000, 3000);
-        // â”€â”€ Step 3: Wait for BillDesk popup that opens automatically after clicking NetBanking â”€â”€
-        // The popup appears immediately after NetBanking is selected.
-        // We must wait for it to fully load (pay.billdesk.com/fusionweb/netbankingredirect/...)
-        // then close it â€” after which Google Workspace executes the checkout automatically.
-        log(`â³ Waiting for BillDesk payment popup to appear (opens after NetBanking click)...`);
+        log(`✅ NetBanking section clicked — Pay with NetBanking is now selected as payment method`);
+        // ── Step 3: Wait for modal to close and the checkout page to reflect NetBanking as selected ──
+        // After clicking "Pay with NetBanking" the modal closes and the main checkout page now shows
+        // "Pay with NetBanking" under Payment method. Give it time to settle before clicking Checkout.
+        log(`⏳ Waiting for NetBanking selection to reflect on checkout page...`);
+        await humanDelay(3000, 5000);
+        // ── Step 4: Click the "Checkout" button on the main "Review and checkout" page ──
+        // This is the blue "Checkout" button at the bottom of the page (screenshot 3).
+        log(`🔍 Looking for Checkout button on the Review and checkout page...`);
+        const checkoutTargets = ['checkout', 'agree and continue', 'agree & continue'];
+        let checkoutClicked = false;
+        for (const target of checkoutTargets) {
+            const found = await findClickableByText(target);
+            if (!found)
+                continue;
+            const { handle, frame, page: fp } = found;
+            try {
+                const info = await safeEval(frame, (node) => ({ tag: node.tagName.toLowerCase(), role: node.getAttribute('role') }), handle, 5000);
+                log(`🎯 Found "${target}" button | Tag: ${info?.tag} | Role: ${info?.role}`);
+                const el = handle.asElement();
+                if (el)
+                    await el.click().catch(async () => { await safeEval(frame, (node) => node.click(), handle, 5000); });
+                log(`💳 Clicked Checkout button: "${target}"`);
+                checkoutClicked = true;
+            }
+            catch (e) {
+                warn(`⚠️ Checkout click error: ${e.message}`);
+            }
+            await handle.dispose().catch(() => { });
+            if (checkoutClicked)
+                break;
+        }
+        if (!checkoutClicked) {
+            log(`⚠️ Checkout not found via walker — trying DOM scan...`);
+            const coFrames = await getUsableFrames();
+            outer: for (const { frame } of coFrames) {
+                try {
+                    const clicked = await safeEval(frame, (tgts) => {
+                        const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        const isVis = (el) => {
+                            const r = el.getBoundingClientRect();
+                            return el.isConnected && r.width > 0 && r.height > 0;
+                        };
+                        const els = [...document.querySelectorAll('button, a, [role="button"], input[type="submit"]')];
+                        for (const el of els) {
+                            if (tgts.some(tgt => norm(el.textContent) === tgt) && isVis(el)) {
+                                el.scrollIntoView({ block: 'center', behavior: 'instant' });
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }, checkoutTargets, 5000);
+                    if (clicked === true) {
+                        log(`✅ Checkout clicked via DOM scan`);
+                        checkoutClicked = true;
+                        break outer;
+                    }
+                }
+                catch (e) { }
+            }
+        }
+        if (!checkoutClicked) {
+            warn(`❌ Checkout button not found — dumping visible elements`);
+            await dumpVisible('checkout_button_not_found');
+            return { status: 'failed', detail: 'checkout button not found' };
+        }
+        // ── Step 5: Wait for BillDesk popup that opens after clicking Checkout ──
+        // After clicking Checkout with NetBanking selected, a new browser window/popup opens:
+        // https://pay.billdesk.com/fusionweb/netbankingredirect/... (screenshot 4 — "close it")
+        // We MUST wait for it to fully load then close it.
+        log(`⏳ Waiting for BillDesk payment popup to appear after Checkout click...`);
         let popupPage = null;
         const popupStartTime = Date.now();
         while (Date.now() - popupStartTime < 30000) {
             const allPages = await browser.pages();
             for (const p of allPages) {
                 if (p !== page && !p.isClosed()) {
-                    const u = (p.url() || '').toLowerCase();
-                    // Accept any real URL (including about:blank that will navigate shortly)
                     popupPage = p;
                     break;
                 }
@@ -3692,19 +3750,17 @@ export class AccountVerifier {
             await new Promise(r => setTimeout(r, 500));
         }
         if (popupPage) {
-            log(`ðŸ“„ Popup page detected. Waiting for it to fully load BillDesk URL...`);
-            // Wait up to 20s for the popup to navigate to the real BillDesk URL
+            log(`📄 Payment popup detected — waiting for BillDesk URL to fully load...`);
             const navStartTime = Date.now();
-            while (Date.now() - navStartTime < 20000) {
+            while (Date.now() - navStartTime < 25000) {
                 try {
                     const u = (popupPage.url() || '').toLowerCase();
                     if (u.includes('billdesk') || u.includes('fusionweb') || u.includes('netbankingredirect') || u.includes('liftoff')) {
-                        log(`âœ… BillDesk popup fully loaded: ${u.substring(0, 150)}`);
+                        log(`✅ BillDesk popup fully loaded: ${u.substring(0, 150)}`);
                         break;
                     }
-                    // Also accept any non-blank, non-google URL as the popup being ready
-                    if (u && u !== 'about:blank' && u !== 'about:srcdoc' && !u.includes('google.com') && !u.includes('payments.google.com')) {
-                        log(`ðŸ“„ Payment popup loaded at: ${u.substring(0, 150)}`);
+                    if (u && u !== 'about:blank' && u !== 'about:srcdoc' && !u.includes('workspace.google.com') && !u.includes('payments.google.com')) {
+                        log(`📄 Payment popup settled at: ${u.substring(0, 150)}`);
                         break;
                     }
                 }
@@ -3719,24 +3775,22 @@ export class AccountVerifier {
             catch (e) {
                 return 'unknown';
             } })();
-            log(`ðŸ“„ Closing payment popup: ${popupUrl}`);
+            log(`📄 Closing payment popup: ${popupUrl}`);
             await popupPage.close().catch(() => { });
-            log(`âœ… Payment popup closed. Google Workspace will now execute checkout automatically.`);
+            log(`✅ Payment popup closed — Google Workspace checkout will now complete automatically`);
         }
         else {
-            log(`â„¹ï¸ No payment popup appeared within timeout â€” continuing to checkout...`);
+            log(`ℹ️ No BillDesk popup appeared within 30s — checkout may proceed without popup`);
         }
-        // â”€â”€ Step 4: Delay after closing popup for Google to automatically execute checkout â”€â”€
-        log(`â³ Waiting for automatic checkout execution after popup closure...`);
-        await humanDelay(6000, 10000);
-        // â”€â”€ Step 5: Monitor redirection to getupgrade or admin â”€â”€
-        log(`â³ Monitoring redirection to getupgrade/admin...`);
+        // ── Step 6: Wait at least 20s after popup closure for automatic checkout to complete ──
+        // Google processes the payment method registration and transitions the account automatically.
+        log(`⏳ Waiting for automatic checkout completion (at least 20s)...`);
+        const postPopupStart = Date.now();
         let reachedGetUpgrade = false;
-        const startMonitorTime = Date.now();
-        while (Date.now() - startMonitorTime < 45000) {
+        while (Date.now() - postPopupStart < 50000) {
             const currentUrl = page.url();
-            log(`ðŸ”— Current URL: ${currentUrl}`);
-            if (currentUrl.includes('getupgrade') || currentUrl.includes('admin.google.com')) {
+            if (currentUrl.includes('getupgrade') || currentUrl.includes('admin.google.com') || currentUrl.includes('/users') || currentUrl.includes('addusers')) {
+                log(`✅ Checkout complete — redirected to: ${currentUrl}`);
                 reachedGetUpgrade = true;
                 break;
             }
@@ -3744,8 +3798,8 @@ export class AccountVerifier {
             for (const p of allPages) {
                 if (!p.isClosed()) {
                     const u = (p.url() || '').toLowerCase();
-                    if (u.includes('getupgrade') || u.includes('admin.google.com')) {
-                        log(`âœ… Found target URL on another page: ${u.substring(0, 120)}`);
+                    if (u.includes('getupgrade') || u.includes('admin.google.com') || u.includes('/users') || u.includes('addusers')) {
+                        log(`✅ Checkout complete — found target on another page: ${u.substring(0, 120)}`);
                         reachedGetUpgrade = true;
                         break;
                     }
@@ -3753,16 +3807,19 @@ export class AccountVerifier {
             }
             if (reachedGetUpgrade)
                 break;
+            const elapsed = Date.now() - postPopupStart;
+            if (elapsed % 5000 < 1000)
+                log(`🔗 Still waiting... ${Math.floor(elapsed / 1000)}s elapsed — current: ${page.url().substring(0, 80)}`);
             await new Promise(r => setTimeout(r, 1000));
         }
         if (!reachedGetUpgrade) {
-            warn(`âš ï¸ Did not redirect automatically to getupgrade. Navigating manually...`);
+            warn(`⚠️ Checkout redirect not detected after 50s — navigating manually to getupgrade`);
             try {
                 await page.goto('https://workspace.google.com/u/0/getupgrade', { waitUntil: 'domcontentloaded', timeout: 30000 });
-                log(`ðŸ§­ Navigated manually to getupgrade. Current URL: ${page.url()}`);
+                log(`🧭 Manually navigated to getupgrade. Current URL: ${page.url()}`);
             }
             catch (e) {
-                warn(`âŒ Failed manual navigation to getupgrade: ${e.message}`);
+                warn(`❌ Failed manual navigation to getupgrade: ${e.message}`);
             }
         }
         return { status: 'success', url: page.url(), detail: 'getupgrade reached' };
