@@ -1233,25 +1233,25 @@ export class AccountVerifier {
 
                     // Step 1: Navigate to domain management
                     Logger.info(`🌐 Navigating to Admin Console Domains...`);
-                    await page.goto('https://admin.google.com/ac/domains/manage?hl=en', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => { });
-                    // Wait for page content to actually render (Admin Console is a heavy SPA)
+                    await page.goto('https://admin.google.com/ac/domains/manage?hl=en', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => { });
+                    // Wait for page content to actually render (Admin Console is a heavy SPA — give it time)
                     await page.waitForFunction(() => {
                         const txt = (document.body && document.body.innerText) || '';
-                        return txt.length > 50 && !/sign in|login|choose an account/i.test(txt);
-                    }, { timeout: 15000 }).catch(() => { });
-                    await new Promise(r => setTimeout(r, 5000));
+                        return txt.length > 100 && !/sign in|login|choose an account/i.test(txt);
+                    }, { timeout: 30000 }).catch(() => { });
+                    await new Promise(r => setTimeout(r, 8000));
                     await saveScreenshot('01_domains_page');
 
                     // Check if redirected to sign-in
                     const currentUrl = page.url();
                     if (currentUrl.includes('accounts.google.com') || currentUrl.includes('signin')) {
                         Logger.warn(`⚠️ Redirected to sign-in — re-navigating to domains page`);
-                        await page.goto('https://admin.google.com/ac/domains/manage?hl=en', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => { });
+                        await page.goto('https://admin.google.com/ac/domains/manage?hl=en', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => { });
                         await page.waitForFunction(() => {
                             const txt = (document.body && document.body.innerText) || '';
-                            return txt.length > 50 && !/sign in|login|choose an account/i.test(txt);
-                        }, { timeout: 15000 }).catch(() => { });
-                        await new Promise(r => setTimeout(r, 5000));
+                            return txt.length > 100 && !/sign in|login|choose an account/i.test(txt);
+                        }, { timeout: 30000 }).catch(() => { });
+                        await new Promise(r => setTimeout(r, 8000));
                         await saveScreenshot('01b_domains_page_retry');
                     }
 
@@ -1260,7 +1260,7 @@ export class AccountVerifier {
                     let verifyClicked = false;
 
                     // 2a: Try all visible text-containing elements (broader search)
-                    const textPatterns = ['verify domain', 'verify your domain', 'verify', 'start verification', 'begin verification'];
+                    const textPatterns = ['verify domain', 'verify your domain', 'verify', 'start verification', 'begin verification', 'get started', 'set up', 'manage'];
                     const allSelectors = 'a, button, span, div[role="button"], td, li, [role="link"], [role="tab"]';
                     const allPageElements = await page.$$(allSelectors);
                     for (const el of allPageElements) {
@@ -3225,31 +3225,31 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
                 await clickTargetHandle.dispose().catch(() => { });
 
                 if (addPaymentClicked) {
+                    // VERBATIM from reference: raw frame.evaluate() — no Promise.race
+                    // wrapper. The Promise.race timeout caused dangling evaluate promises
+                    // that piled up and made the first poll always miss the list opening.
                     const pollStart = Date.now();
                     while (Date.now() - pollStart < 20000 && !listOpened) {
                         const checkFrames = await getUsableFrames();
                         for (const { frame } of checkFrames) {
                             try {
-                                listOpened = await Promise.race([
-                                    frame.evaluate(() => {
-                                        const isVis = (e: any) => {
-                                            if (!e.isConnected) return false;
-                                            const s = window.getComputedStyle(e);
-                                            return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' && !e.hasAttribute('hidden') && e.getAttribute('aria-hidden') !== 'true' && e.getBoundingClientRect().width > 0;
-                                        };
-                                        const norm = (t: any) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                                        const els = [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="dialog"], [role="option"]')];
-                                        for (const e of els) {
-                                            if (!isVis(e)) continue;
-                                            const text = norm(e.textContent);
-                                            if (text.includes('add credit or debit card') || text.includes('pay by upi qr code') || text.includes('pay with netbanking')) return true;
-                                        }
-                                        const addBtn = [...document.querySelectorAll('button, [role="button"]')].find((b: any) => norm(b.textContent) === 'add payment method' && b.getAttribute('aria-expanded') === 'true');
-                                        if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis)) return true;
-                                        return false;
-                                    }),
-                                    new Promise<boolean>(r => setTimeout(() => r(false), 3000))
-                                ]);
+                                listOpened = await frame.evaluate(() => {
+                                    const isVis = (e: any) => {
+                                        if (!e.isConnected) return false;
+                                        const s = window.getComputedStyle(e);
+                                        return s.display !== 'none' && s.visibility !== 'hidden' && s.visibility !== 'collapse' && s.opacity !== '0' && !e.hasAttribute('hidden') && e.getAttribute('aria-hidden') !== 'true' && e.getBoundingClientRect().width > 0;
+                                    };
+                                    const norm = (t: any) => String(t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                                    const els = [...document.querySelectorAll('[role="listbox"], [role="menu"], [role="dialog"], [role="option"]')];
+                                    for (const e of els) {
+                                        if (!isVis(e)) continue;
+                                        const text = norm(e.textContent);
+                                        if (text.includes('add credit or debit card') || text.includes('pay by upi qr code') || text.includes('pay with netbanking')) return true;
+                                    }
+                                    const addBtn = [...document.querySelectorAll('button, [role="button"]')].find((b: any) => norm(b.textContent) === 'add payment method' && b.getAttribute('aria-expanded') === 'true');
+                                    if (addBtn && [...document.querySelectorAll('[role="option"]')].some(isVis)) return true;
+                                    return false;
+                                });
                                 if (listOpened) break;
                             } catch (e) { }
                         }
@@ -3598,9 +3598,24 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
 
         let bankSelected = false;
         let bankChosen: string | null = null;
-        let noDropdownFound = false;
+
+        // Pre-check: scan all frames for any bank dropdown before trying any banks.
+        // This avoids wasting 15 × N iterations when no dropdown exists.
+        let hasBankDropdown = false;
+        {
+            const preFrames = await getUsableFrames();
+            for (const { frame } of preFrames) {
+                try {
+                    hasBankDropdown = await safeEval(frame, () => {
+                        return !!document.querySelector('select, [role="combobox"], [role="listbox"]');
+                    }, undefined, 3000);
+                    if (hasBankDropdown) break;
+                } catch (e) { }
+            }
+        }
+
+        if (hasBankDropdown) {
         for (const bank of banks) {
-            if (noDropdownFound) break;
             const frames = await getUsableFrames();
             for (const { frame, page: pageForMouse } of frames) {
                 bankSelected = await selectFromComboboxOrSelectInFrame(frame, pageForMouse, bank);
@@ -3625,23 +3640,10 @@ private async waitForCheckoutFormToLoad(page: any, timeout = 35000): Promise<boo
                 if (bankSelected) break;
             }
             if (bankSelected) break;
-            if (bank === 'HDFC Bank') {
-                let hasDropdown = false;
-                for (const { frame } of frames) {
-                    try {
-                        hasDropdown = await safeEval(frame, () => {
-                            return !!document.querySelector('select, [role="combobox"], [role="listbox"]');
-                        }, undefined, 2000);
-                        if (hasDropdown) break;
-                    } catch (e) { }
-                }
-                if (!hasDropdown) {
-                    noDropdownFound = true;
-                    log(`ℹ️ No bank dropdown found in any frame — skipping remaining bank attempts`);
-                }
-            }
-            if (!noDropdownFound) log(`🔎 no bank match for "${bank}" — next...`);
         }
+        } // end if (hasBankDropdown)
+        if (!hasBankDropdown) log(`ℹ️ No bank dropdown found in any frame — skipping bank selection`);
+
         log(bankSelected ? `🏦 Bank selected: ${bankChosen}` : `⚠️ No bank could be auto-selected`);
         await humanDelay(1500, 2500);
 
