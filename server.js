@@ -3707,6 +3707,53 @@ async function getUnverifiedDomains(adminEmail, keyData, log = () => {}) {
     return unverified;
 }
 
+// ── Migrate all users on an account to a target domain (excluding admin) ────
+async function migrateUsersToDomain(adminEmail, targetDomain, log = () => {}) {
+    const { google } = await import('googleapis');
+    const keyData = await getKeyData(adminEmail);
+    const auth = new google.auth.JWT({
+        email: keyData.client_email,
+        key: keyData.private_key,
+        scopes: ['https://www.googleapis.com/auth/admin.directory.user'],
+        subject: adminEmail
+    });
+    const admin = google.admin({ version: 'directory_v1', auth });
+
+    // List all users
+    let allUsers = [], pageToken = null;
+    do {
+        const r = await admin.users.list({ customer: 'my_customer', maxResults: 500, pageToken });
+        allUsers = allUsers.concat(r.data.users || []);
+        pageToken = r.data.nextPageToken;
+    } while (pageToken);
+
+    // Filter: skip admin + users already on target domain
+    const toMigrate = allUsers.filter(u => u.primaryEmail !== adminEmail && !u.primaryEmail.endsWith(`@${targetDomain}`));
+
+    if (toMigrate.length === 0) {
+        log(`[Migrate] ${adminEmail}: No users to migrate to ${targetDomain}`);
+        return { movedCount: 0, total: 0, errors: [] };
+    }
+
+    let movedCount = 0;
+    const errors = [];
+    for (const user of toMigrate) {
+        const username = user.primaryEmail.split('@')[0];
+        try {
+            await admin.users.update({
+                userKey: user.primaryEmail,
+                requestBody: { primaryEmail: `${username}@${targetDomain}` }
+            });
+            movedCount++;
+        } catch (e) {
+            errors.push({ user: user.primaryEmail, error: e.message });
+        }
+    }
+
+    log(`[Migrate] ${adminEmail}: Moved ${movedCount}/${toMigrate.length} users to ${targetDomain}`);
+    return { movedCount, total: toMigrate.length, errors };
+}
+
 async function runDomainVerifyJob(job) {
     const pushLog = (m) => {
         job.logs.push(m);
@@ -3744,6 +3791,25 @@ async function runDomainVerifyJob(job) {
                 accResult.domains = botRes.results || [];
                 if (botRes.error) accResult.error = botRes.error;
                 pushLog(`[${entry.adminEmail}] Done — ${accResult.domains.filter(d => d.status === 'verified').length}/${accResult.domains.length} verified`);
+
+                // Migrate users to newly verified domain if requested
+                if (job.migrateUsers) {
+                    const verifiedDomains = accResult.domains.filter(d => d.status === 'verified').map(d => d.domain);
+                    if (verifiedDomains.length > 0) {
+                        const targetDomain = verifiedDomains[0];
+                        pushLog(`[${entry.adminEmail}] Migrating users to ${targetDomain}…`);
+                        try {
+                            const migRes = await migrateUsersToDomain(entry.adminEmail, targetDomain, pushLog);
+                            accResult.migration = { targetDomain, ...migRes };
+                            pushLog(`[${entry.adminEmail}] Migration done — ${migRes.movedCount}/${migRes.total} moved`);
+                        } catch (migErr) {
+                            accResult.migration = { targetDomain, error: migErr.message };
+                            pushLog(`[${entry.adminEmail}] Migration error: ${migErr.message}`);
+                        }
+                    } else {
+                        pushLog(`[${entry.adminEmail}] No verified domains — skipping migration`);
+                    }
+                }
             }
         } catch (e) {
             accResult.error = e.message;
@@ -3777,7 +3843,7 @@ async function runDomainVerifyJob(job) {
 // Start a domain-verification job
 app.post('/api/manage/domain-verify/start', async (req, res) => {
     try {
-        const { entries, concurrency } = req.body;
+            const { entries, concurrency, migrateUsers } = req.body;
         if (!entries || !Array.isArray(entries) || entries.length === 0) {
             return res.status(400).json({ error: 'entries[] required (adminEmail + optional password)' });
         }
@@ -3801,6 +3867,7 @@ app.post('/api/manage/domain-verify/start', async (req, res) => {
             jobId,
             status: 'running',
             concurrency: resolvedConcurrency,
+            migrateUsers: !!migrateUsers,
             startedAt: Date.now(),
             entries: entries.map(e => ({ adminEmail: e.adminEmail, password: e.password || null })),
             results: [],
