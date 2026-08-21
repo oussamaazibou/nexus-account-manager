@@ -1411,6 +1411,20 @@ const ManageAccounts: React.FC = () => {
                                                                         <div className="text-[9px] uppercase tracking-wider text-[var(--text-muted)] font-bold">Not verified</div>
                                                                     </div>
                                                                 </div>
+                                                                {results.some((r: any) => r.migration && !r.migration.error && r.migration.movedCount > 0) && (
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            const lines = results
+                                                                                .filter((r: any) => r.migration && !r.migration.error && r.migration.movedCount > 0)
+                                                                                .map((r: any) => `${r.adminEmail}: ${r.migration.movedCount}/${r.migration.total} users → ${r.migration.targetDomain}`);
+                                                                            navigator.clipboard.writeText(lines.join('\n'));
+                                                                            toast(`Copied ${lines.length} account(s) migrated users to clipboard`, 'ok');
+                                                                        }}
+                                                                        className="mt-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white text-xs font-bold transition-all shrink-0"
+                                                                    >
+                                                                        📋 Copy Migrated Users
+                                                                    </button>
+                                                                )}
                                                             </div>
                                                             {notVerifiedDomains.length > 0 && (
                                                                 <div className="bg-black/30 border border-white/10 rounded-xl p-3">
@@ -1471,6 +1485,16 @@ const ManageAccounts: React.FC = () => {
                                                                     )}
                                                                 </div>
                                                             ))}
+                                                            {acc.migration && (
+                                                                <div className="flex items-center justify-between gap-2 text-xs py-1.5 border-t border-white/5">
+                                                                    <span className="font-mono truncate">→ {acc.migration.targetDomain}</span>
+                                                                    {acc.migration.error ? (
+                                                                        <span className="text-red-400 font-bold shrink-0">✕ {acc.migration.error}</span>
+                                                                    ) : (
+                                                                        <span className="text-emerald-400 font-bold shrink-0">✓ {acc.migration.movedCount}/{acc.migration.total} migrated</span>
+                                                                    )}
+                                                                </div>
+                                                            )}
                                                             {domainVerifyState.status !== 'running' && (acc.error || (acc.domains || []).some((d: any) => d.status === 'error')) && (
                                                                 <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/5">
                                                                     <button
