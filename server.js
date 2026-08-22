@@ -2555,10 +2555,26 @@ app.get('/api/manage/accounts', (req, res) => {
             const localPath = path.join(tmpDir, `${email.replace('@', '_at_').replace(/\./g, '_')}.json`);
             const cached = fs.existsSync(localPath);
             const collection = metadata[email] ? metadata[email].collection || 'Uncategorized' : 'Uncategorized';
-            accounts.push({ email, password, domain, cached, collection });
+            const f1Domain = metadata[email] ? metadata[email].f1Domain || null : null;
+            accounts.push({ email, password, domain, cached, collection, f1Domain });
         }
 
         res.json(accounts);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Set F1 (first-used) domain for an account
+app.post('/api/manage/account/f1', (req, res) => {
+    try {
+        const { email, f1Domain } = req.body;
+        if (!email) return res.status(400).json({ error: 'email required' });
+        const metadata = getMetadata();
+        if (!metadata[email]) metadata[email] = {};
+        metadata[email].f1Domain = f1Domain || null;
+        saveMetadata(metadata);
+        res.json({ success: true, email, f1Domain: metadata[email].f1Domain });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

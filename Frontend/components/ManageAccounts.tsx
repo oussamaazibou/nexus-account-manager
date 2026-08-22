@@ -9,6 +9,7 @@ interface WorkspaceAccount {
     cached?: boolean;
     collection?: string;
     password?: string;
+    f1Domain?: string | null;
 }
 
 interface WsUser {
@@ -386,6 +387,39 @@ const ManageAccounts: React.FC = () => {
         }
         setDeletingBulkSuspended(false);
         toast(`Bulk deletion done. Total deleted: ${deletedTotal}`, 'ok');
+    };
+
+    const handleSetF1Domain = async (email: string, f1Domain: string | null) => {
+        try {
+            const res = await fetch(`${API_URL}/manage/account/f1`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, f1Domain })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setAccounts(prev => prev.map(a => a.email === email ? { ...a, f1Domain } : a));
+                toast(f1Domain ? `F1 set to ${f1Domain} for ${email}` : `F1 cleared for ${email}`, 'ok');
+            }
+        } catch (e: any) {
+            toast('Error: ' + e.message, 'err');
+        }
+    };
+
+    const handleCopyF1Credentials = () => {
+        if (!bulkInfoResults) return;
+        const lines: string[] = [];
+        for (const adminEmail of Object.keys(bulkInfoResults)) {
+            const acc = accounts.find(a => a.email === adminEmail);
+            if (!acc || !acc.password || !acc.f1Domain) continue;
+            lines.push(`${acc.email}:${acc.password}:${acc.f1Domain}`);
+        }
+        if (lines.length === 0) {
+            toast('No accounts with F1 domain set — click an F1 badge on a domain first', 'err');
+            return;
+        }
+        navigator.clipboard.writeText(lines.join('\n'));
+        toast(`Copied ${lines.length} F1 credentials to clipboard`, 'ok');
     };
 
     const handleDownloadBulkUsers = () => {
@@ -1222,6 +1256,9 @@ const ManageAccounts: React.FC = () => {
                                                 <button onClick={handleDownloadBulkUsers} disabled={!bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500 hover:text-white text-sm font-bold transition-all shrink-0">
                                                     💾 Download Users
                                                 </button>
+                                                <button onClick={handleCopyF1Credentials} disabled={!bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white text-sm font-bold transition-all shrink-0">
+                                                    📋 Copy F1 Credentials
+                                                </button>
                                                 <div className="flex items-center gap-1.5 bg-black/30 border border-white/10 rounded-xl px-2 py-1.5 shrink-0">
                                                     <span className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-wider leading-none">Accounts<br/>at once</span>
                                                     <div className="flex items-center gap-1">
@@ -1269,10 +1306,15 @@ const ManageAccounts: React.FC = () => {
                                             <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                                                 {Object.entries(bulkInfoResults).map(([email, d]: any) => (
                                                     <div key={email} className="bg-white/5 rounded-xl p-4 border border-white/10 hover:bg-white/10 transition-colors">
-                                                        <div className="font-bold flex items-center justify-between gap-2 text-md mb-3 pb-3 border-b border-white/5">
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-indigo-400">💼</span> {email}
-                                                            </div>
+                                                         <div className="font-bold flex items-center justify-between gap-2 text-md mb-3 pb-3 border-b border-white/5">
+                                                             <div className="flex items-center gap-2">
+                                                                 <span className="text-indigo-400">💼</span> {email}
+                                                                 {(() => {
+                                                                     const accF1 = accounts.find(a => a.email === email)?.f1Domain;
+                                                                     if (!accF1) return null;
+                                                                     return <span className="text-[10px] bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider">F1: {accF1}</span>;
+                                                                 })()}
+                                                             </div>
                                                             <div className="text-xs px-2 py-0.5 rounded bg-black/30 text-[var(--text-muted)] font-mono">
                                                                 {d.users ? d.users.length : 0} Users
                                                             </div>
@@ -1312,6 +1354,19 @@ const ManageAccounts: React.FC = () => {
                                                                             <div className="flex items-center gap-2">
                                                                                 <span className="font-bold">{dom.domainName}</span>
                                                                                 {dom.isPrimary && <span className="text-[10px] bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider">Primary</span>}
+                                                                                {(() => {
+                                                                                    const accF1 = accounts.find(a => a.email === email)?.f1Domain;
+                                                                                    const isF1 = accF1 === dom.domainName;
+                                                                                    return (
+                                                                                        <button
+                                                                                            onClick={() => handleSetF1Domain(email, isF1 ? null : dom.domainName)}
+                                                                                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-black uppercase tracking-wider cursor-pointer transition-all ${isF1 ? 'bg-orange-500/30 text-orange-300 shadow-sm shadow-orange-500/30' : 'bg-white/5 text-[var(--text-muted)] hover:bg-orange-500/20 hover:text-orange-400'}`}
+                                                                                            title={isF1 ? 'Click to remove F1' : 'Click to set as F1 (first-used domain)'}
+                                                                                        >
+                                                                                            F1
+                                                                                        </button>
+                                                                                    );
+                                                                                })()}
                                                                             </div>
                                                                             <div className="flex items-center gap-2">
                                                                                 {dom.verified ? (
