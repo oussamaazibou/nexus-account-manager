@@ -78,6 +78,8 @@ const ManageAccounts: React.FC = () => {
     const [selectedCollection, setSelectedCollection] = useState<string>('All');
     const [bulkInfoResults, setBulkInfoResults] = useState<{ [email: string]: any } | null>(null);
     const [bulkInfoLoading, setBulkInfoLoading] = useState(false);
+    const [selectedDomainsToDelete, setSelectedDomainsToDelete] = useState<Record<string, boolean>>({});
+    const [deletingDomains, setDeletingDomains] = useState(false);
 
     // Domain Verification (bulk, via Workspace UI session) state
     const [domainVerifyJobId, setDomainVerifyJobId] = useState<string | null>(null);
@@ -420,6 +422,35 @@ const ManageAccounts: React.FC = () => {
         }
         navigator.clipboard.writeText(lines.join('\n'));
         toast(`Copied ${lines.length} F1 credentials to clipboard`, 'ok');
+    };
+
+    const handleDeleteSelectedDomains = async () => {
+        const entries = Object.keys(selectedDomainsToDelete)
+            .filter(k => selectedDomainsToDelete[k])
+            .map(k => {
+                const [adminEmail, domainName] = k.split('|||');
+                return { adminEmail, domainName };
+            });
+        if (entries.length === 0) { toast('No domains selected', 'err'); return; }
+        if (!confirm(`Delete ${entries.length} unverified domain(s)? This cannot be undone.`)) return;
+        setDeletingDomains(true);
+        try {
+            const res = await fetch(`${API_URL}/manage/bulk-delete-domains`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entries })
+            });
+            const data = await res.json();
+            const ok = (data.results || []).filter((r: any) => r.status === 'deleted').length;
+            const fail = (data.results || []).filter((r: any) => r.status === 'error').length;
+            setSelectedDomainsToDelete({});
+            toast(`Domains deleted: ${ok} ok, ${fail} failed`, fail > 0 ? 'err' : 'ok');
+            if (ok > 0) handleBulkLoadInfo();
+        } catch (e: any) {
+            toast('Error: ' + e.message, 'err');
+        } finally {
+            setDeletingDomains(false);
+        }
     };
 
     const handleDownloadBulkUsers = () => {
@@ -1345,14 +1376,50 @@ const ManageAccounts: React.FC = () => {
                                                                 {d.users.length === 0 && <div className="text-xs text-[var(--text-muted)] italic">No users found for this workspace.</div>}
                                                             </div>
                                                         )}
-                                                        {!d.error && d.domains && d.domains.length > 0 && (
-                                                            <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
-                                                                <div className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2">Domains ({d.domains.length})</div>
-                                                                <div className="grid grid-cols-1 gap-2">
-                                                                    {d.domains.map((dom: any) => (
-                                                                        <div key={dom.domainName} className="flex items-center justify-between bg-black/40 px-3 py-2 rounded-lg text-sm border border-white/5">
-                                                                            <div className="flex items-center gap-2">
-                                                                                <span className="font-bold">{dom.domainName}</span>
+                                                         {!d.error && d.domains && d.domains.length > 0 && (
+                                                             <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
+                                                                 <div className="flex items-center justify-between mb-2">
+                                                                     <div className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">Domains ({d.domains.length})</div>
+                                                                     {d.domains.some((dom: any) => !dom.verified && !dom.isPrimary) && (
+                                                                         <button
+                                                                             disabled={deletingDomains}
+                                                                             onClick={async () => {
+                                                                                 const toDelete = d.domains
+                                                                                     .filter((dom: any) => !dom.verified && !dom.isPrimary && selectedDomainsToDelete[`${email}|||${dom.domainName}`])
+                                                                                     .map((dom: any) => `${email}|||${dom.domainName}`);
+                                                                                 if (toDelete.length === 0) {
+                                                                                     // Auto-select all unverified non-primary domains
+                                                                                     const autoSelect: Record<string, boolean> = {};
+                                                                                     d.domains.forEach((dom: any) => {
+                                                                                         if (!dom.verified && !dom.isPrimary) autoSelect[`${email}|||${dom.domainName}`] = true;
+                                                                                     });
+                                                                                     setSelectedDomainsToDelete(prev => ({ ...prev, ...autoSelect }));
+                                                                                 } else {
+                                                                                     handleDeleteSelectedDomains();
+                                                                                 }
+                                                                             }}
+                                                                             className={`text-[10px] px-2 py-1 rounded-lg font-bold transition-all ${Object.keys(selectedDomainsToDelete).filter(k => k.startsWith(email + '|||') && selectedDomainsToDelete[k]).length > 0 ? 'bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white' : 'bg-white/5 text-[var(--text-muted)] hover:bg-amber-500/20 hover:text-amber-400'}`}
+                                                                         >
+                                                                             {(() => {
+                                                                                 const count = Object.keys(selectedDomainsToDelete).filter(k => k.startsWith(email + '|||') && selectedDomainsToDelete[k]).length;
+                                                                                 return count > 0 ? `🗑 Delete ${count} selected` : '☐ Select unverified';
+                                                                             })()}
+                                                                         </button>
+                                                                     )}
+                                                                 </div>
+                                                                 <div className="grid grid-cols-1 gap-2">
+                                                                     {d.domains.map((dom: any) => (
+                                                                         <div key={dom.domainName} className="flex items-center justify-between bg-black/40 px-3 py-2 rounded-lg text-sm border border-white/5">
+                                                                             <div className="flex items-center gap-2">
+                                                                                 {!dom.verified && !dom.isPrimary && (
+                                                                                     <input
+                                                                                         type="checkbox"
+                                                                                         checked={!!selectedDomainsToDelete[`${email}|||${dom.domainName}`]}
+                                                                                         onChange={e => setSelectedDomainsToDelete(prev => ({ ...prev, [`${email}|||${dom.domainName}`]: e.target.checked }))}
+                                                                                         className="w-3.5 h-3.5 rounded border-white/20 bg-black/40 text-red-500 focus:ring-red-500 cursor-pointer shrink-0"
+                                                                                     />
+                                                                                 )}
+                                                                                 <span className="font-bold">{dom.domainName}</span>
                                                                                 {dom.isPrimary && <span className="text-[10px] bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider">Primary</span>}
                                                                                 {(() => {
                                                                                     const accF1 = accounts.find(a => a.email === email)?.f1Domain;

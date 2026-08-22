@@ -4159,6 +4159,62 @@ app.post('/api/manage/delete-domain-aliases', async (req, res) => {
     }
 });
 
+// Bulk delete unverified domains across multiple admin accounts
+app.post('/api/manage/bulk-delete-domains', async (req, res) => {
+    try {
+        const { entries } = req.body; // [{ adminEmail, domainName }]
+        if (!Array.isArray(entries) || entries.length === 0)
+            return res.status(400).json({ error: 'entries array required [{ adminEmail, domainName }]' });
+
+        const { google } = await import('googleapis');
+        const results = [];
+
+        for (let i = 0; i < entries.length; i++) {
+            const { adminEmail, domainName } = entries[i];
+            if (!adminEmail || !domainName) {
+                results.push({ adminEmail, domainName, error: 'adminEmail and domainName required' });
+                continue;
+            }
+            console.log(`[BulkDeleteDomains] ${i + 1}/${entries.length}: ${adminEmail} → delete ${domainName}`);
+            try {
+                const keyData = await getKeyData(adminEmail);
+                const auth = new google.auth.JWT({
+                    email: keyData.client_email,
+                    key: keyData.private_key,
+                    scopes: ['https://www.googleapis.com/auth/admin.directory.user', 'https://www.googleapis.com/auth/admin.directory.domain'],
+                    subject: adminEmail
+                });
+                const admin = google.admin({ version: 'directory_v1', auth });
+
+                // List all users and remove aliases on this domain first
+                let allUsers = [], pageToken = null;
+                do {
+                    const r = await admin.users.list({ customer: 'my_customer', maxResults: 500, pageToken, projection: 'full' });
+                    allUsers = allUsers.concat(r.data.users || []);
+                    pageToken = r.data.nextPageToken;
+                } while (pageToken);
+                await removeAliasesOnDomain(admin, allUsers, domainName);
+
+                // Delete the domain
+                const res2 = await deleteDomainWithRetry(google, keyData, adminEmail, domainName, admin, 3, 5000);
+                if (res2.deleted) {
+                    results.push({ adminEmail, domainName, status: 'deleted' });
+                } else {
+                    results.push({ adminEmail, domainName, status: 'error', error: res2.error });
+                }
+            } catch (e) {
+                console.error(`[BulkDeleteDomains] Error on ${adminEmail}/${domainName}: ${e.message}`);
+                results.push({ adminEmail, domainName, status: 'error', error: e.message });
+            }
+        }
+
+        res.json({ results });
+    } catch (e) {
+        console.error(`[BulkDeleteDomains] ❌ ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // Bulk add domains across multiple admin accounts (batches of 5 concurrent)
 app.post('/api/manage/bulk-add-domains-multi', async (req, res) => {
     try {
