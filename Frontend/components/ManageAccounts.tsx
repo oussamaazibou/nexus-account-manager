@@ -1300,8 +1300,9 @@ const ManageAccounts: React.FC = () => {
                                                                     if (!bulkInfoResults) return;
                                                                     const all: Record<string, boolean> = {};
                                                                     for (const [email, d] of Object.entries(bulkInfoResults) as any) {
+                                                                        const accF1 = accounts.find(a => a.email === email)?.f1Domain;
                                                                         if (d.domains) d.domains.forEach((dom: any) => {
-                                                                            if (!dom.isPrimary) all[`${email}|||${dom.domainName}`] = true;
+                                                                            if (!dom.isPrimary && dom.domainName !== accF1) all[`${email}|||${dom.domainName}`] = true;
                                                                         });
                                                                     }
                                                                     setSelectedDomainsToDelete(all);
@@ -1412,33 +1413,40 @@ const ManageAccounts: React.FC = () => {
                                                              <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
                                                                  <div className="flex items-center justify-between mb-2">
                                                                      <div className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">Domains ({d.domains.length})</div>
-                                                                 {d.domains.some((dom: any) => !dom.isPrimary) && (
+                                                                 {(() => {
+                                                                     const accF1 = accounts.find(a => a.email === email)?.f1Domain;
+                                                                     const deletable = d.domains.filter((dom: any) => !dom.isPrimary && dom.domainName !== accF1);
+                                                                     if (deletable.length === 0) return null;
+                                                                     return (
                                                                      <button
                                                                          disabled={deletingDomains}
                                                                          onClick={() => {
-                                                                             const currentCount = d.domains.filter((dom: any) => !dom.isPrimary && selectedDomainsToDelete[`${email}|||${dom.domainName}`]).length;
-                                                                             const totalCount = d.domains.filter((dom: any) => !dom.isPrimary).length;
+                                                                             const accF1 = accounts.find(a => a.email === email)?.f1Domain;
+                                                                             const currentCount = d.domains.filter((dom: any) => !dom.isPrimary && dom.domainName !== accF1 && selectedDomainsToDelete[`${email}|||${dom.domainName}`]).length;
+                                                                             const totalCount = deletable.length;
                                                                              const autoSelect: Record<string, boolean> = {};
                                                                              d.domains.forEach((dom: any) => {
-                                                                                 if (!dom.isPrimary) autoSelect[`${email}|||${dom.domainName}`] = currentCount < totalCount;
+                                                                                 if (!dom.isPrimary && dom.domainName !== accF1) autoSelect[`${email}|||${dom.domainName}`] = currentCount < totalCount;
                                                                              });
                                                                              setSelectedDomainsToDelete(prev => ({ ...prev, ...autoSelect }));
                                                                          }}
-                                                                         className={`text-[10px] px-2 py-1 rounded-lg font-bold transition-all ${d.domains.filter((dom: any) => !dom.isPrimary && selectedDomainsToDelete[`${email}|||${dom.domainName}`]).length > 0 ? 'bg-red-500/20 text-red-400' : 'bg-white/5 text-[var(--text-muted)] hover:bg-amber-500/20 hover:text-amber-400'}`}
+                                                                         className={`text-[10px] px-2 py-1 rounded-lg font-bold transition-all ${d.domains.filter((dom: any) => !dom.isPrimary && dom.domainName !== accounts.find(a => a.email === email)?.f1Domain && selectedDomainsToDelete[`${email}|||${dom.domainName}`]).length > 0 ? 'bg-red-500/20 text-red-400' : 'bg-white/5 text-[var(--text-muted)] hover:bg-amber-500/20 hover:text-amber-400'}`}
                                                                      >
                                                                          {(() => {
-                                                                             const count = d.domains.filter((dom: any) => !dom.isPrimary && selectedDomainsToDelete[`${email}|||${dom.domainName}`]).length;
-                                                                             const total = d.domains.filter((dom: any) => !dom.isPrimary).length;
+                                                                             const accF1 = accounts.find(a => a.email === email)?.f1Domain;
+                                                                             const count = d.domains.filter((dom: any) => !dom.isPrimary && dom.domainName !== accF1 && selectedDomainsToDelete[`${email}|||${dom.domainName}`]).length;
+                                                                             const total = deletable.length;
                                                                              return count > 0 ? `☑ ${count}/${total}` : `☐ ${total} deletable`;
                                                                          })()}
                                                                      </button>
-                                                                 )}
+                                                                     );
+                                                                 })()}
                                                                  </div>
                                                                  <div className="grid grid-cols-1 gap-2">
                                                                      {d.domains.map((dom: any) => (
                                                                          <div key={dom.domainName} className="flex items-center justify-between bg-black/40 px-3 py-2 rounded-lg text-sm border border-white/5">
                                                                              <div className="flex items-center gap-2">
-                                                                                 {!dom.isPrimary && (
+                                                                                 {!dom.isPrimary && dom.domainName !== accounts.find(a => a.email === email)?.f1Domain && (
                                                                                      <input
                                                                                          type="checkbox"
                                                                                          checked={!!selectedDomainsToDelete[`${email}|||${dom.domainName}`]}
