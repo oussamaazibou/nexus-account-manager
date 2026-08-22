@@ -1290,6 +1290,38 @@ const ManageAccounts: React.FC = () => {
                                                 <button onClick={handleCopyF1Credentials} disabled={!bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-orange-500/10 text-orange-400 hover:bg-orange-500 hover:text-white text-sm font-bold transition-all shrink-0">
                                                     📋 Copy F1 Credentials
                                                 </button>
+                                                {(() => {
+                                                    const selCount = Object.keys(selectedDomainsToDelete).filter(k => selectedDomainsToDelete[k]).length;
+                                                    return (
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            <button
+                                                                disabled={!bulkInfoResults || Object.keys(bulkInfoResults).length === 0}
+                                                                onClick={() => {
+                                                                    if (!bulkInfoResults) return;
+                                                                    const all: Record<string, boolean> = {};
+                                                                    for (const [email, d] of Object.entries(bulkInfoResults) as any) {
+                                                                        if (d.domains) d.domains.forEach((dom: any) => {
+                                                                            if (!dom.verified && !dom.isPrimary) all[`${email}|||${dom.domainName}`] = true;
+                                                                        });
+                                                                    }
+                                                                    setSelectedDomainsToDelete(all);
+                                                                }}
+                                                                className="px-4 py-2 rounded-xl bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-white text-sm font-bold transition-all"
+                                                            >
+                                                                ☑ Select All Unverified
+                                                            </button>
+                                                            {selCount > 0 && (
+                                                                <button
+                                                                    onClick={handleDeleteSelectedDomains}
+                                                                    disabled={deletingDomains}
+                                                                    className="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white text-sm font-bold transition-all"
+                                                                >
+                                                                    {deletingDomains ? '⏳ Deleting...' : `🗑 Delete ${selCount} Selected`}
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
                                                 <div className="flex items-center gap-1.5 bg-black/30 border border-white/10 rounded-xl px-2 py-1.5 shrink-0">
                                                     <span className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-wider leading-none">Accounts<br/>at once</span>
                                                     <div className="flex items-center gap-1">
@@ -1380,32 +1412,27 @@ const ManageAccounts: React.FC = () => {
                                                              <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
                                                                  <div className="flex items-center justify-between mb-2">
                                                                      <div className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">Domains ({d.domains.length})</div>
-                                                                     {d.domains.some((dom: any) => !dom.verified && !dom.isPrimary) && (
-                                                                         <button
-                                                                             disabled={deletingDomains}
-                                                                             onClick={async () => {
-                                                                                 const toDelete = d.domains
-                                                                                     .filter((dom: any) => !dom.verified && !dom.isPrimary && selectedDomainsToDelete[`${email}|||${dom.domainName}`])
-                                                                                     .map((dom: any) => `${email}|||${dom.domainName}`);
-                                                                                 if (toDelete.length === 0) {
-                                                                                     // Auto-select all unverified non-primary domains
-                                                                                     const autoSelect: Record<string, boolean> = {};
-                                                                                     d.domains.forEach((dom: any) => {
-                                                                                         if (!dom.verified && !dom.isPrimary) autoSelect[`${email}|||${dom.domainName}`] = true;
-                                                                                     });
-                                                                                     setSelectedDomainsToDelete(prev => ({ ...prev, ...autoSelect }));
-                                                                                 } else {
-                                                                                     handleDeleteSelectedDomains();
-                                                                                 }
-                                                                             }}
-                                                                             className={`text-[10px] px-2 py-1 rounded-lg font-bold transition-all ${Object.keys(selectedDomainsToDelete).filter(k => k.startsWith(email + '|||') && selectedDomainsToDelete[k]).length > 0 ? 'bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white' : 'bg-white/5 text-[var(--text-muted)] hover:bg-amber-500/20 hover:text-amber-400'}`}
-                                                                         >
-                                                                             {(() => {
-                                                                                 const count = Object.keys(selectedDomainsToDelete).filter(k => k.startsWith(email + '|||') && selectedDomainsToDelete[k]).length;
-                                                                                 return count > 0 ? `🗑 Delete ${count} selected` : '☐ Select unverified';
-                                                                             })()}
-                                                                         </button>
-                                                                     )}
+                                                                 {d.domains.some((dom: any) => !dom.verified && !dom.isPrimary) && (
+                                                                     <button
+                                                                         disabled={deletingDomains}
+                                                                         onClick={() => {
+                                                                             const currentCount = d.domains.filter((dom: any) => !dom.verified && !dom.isPrimary && selectedDomainsToDelete[`${email}|||${dom.domainName}`]).length;
+                                                                             const totalCount = d.domains.filter((dom: any) => !dom.verified && !dom.isPrimary).length;
+                                                                             const autoSelect: Record<string, boolean> = {};
+                                                                             d.domains.forEach((dom: any) => {
+                                                                                 if (!dom.verified && !dom.isPrimary) autoSelect[`${email}|||${dom.domainName}`] = currentCount < totalCount;
+                                                                             });
+                                                                             setSelectedDomainsToDelete(prev => ({ ...prev, ...autoSelect }));
+                                                                         }}
+                                                                         className={`text-[10px] px-2 py-1 rounded-lg font-bold transition-all ${d.domains.filter((dom: any) => !dom.verified && !dom.isPrimary && selectedDomainsToDelete[`${email}|||${dom.domainName}`]).length > 0 ? 'bg-red-500/20 text-red-400' : 'bg-white/5 text-[var(--text-muted)] hover:bg-amber-500/20 hover:text-amber-400'}`}
+                                                                     >
+                                                                         {(() => {
+                                                                             const count = d.domains.filter((dom: any) => !dom.verified && !dom.isPrimary && selectedDomainsToDelete[`${email}|||${dom.domainName}`]).length;
+                                                                             const total = d.domains.filter((dom: any) => !dom.verified && !dom.isPrimary).length;
+                                                                             return count > 0 ? `☑ ${count}/${total}` : `☐ ${total} unverified`;
+                                                                         })()}
+                                                                     </button>
+                                                                 )}
                                                                  </div>
                                                                  <div className="grid grid-cols-1 gap-2">
                                                                      {d.domains.map((dom: any) => (
