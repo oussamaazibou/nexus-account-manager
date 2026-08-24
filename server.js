@@ -78,6 +78,7 @@ const loadConfigToEnv = () => {
             if (config.awsSecretKey) process.env.AWS_SECRET_ACCESS_KEY = config.awsSecretKey;
             if (config.awsRegion) process.env.AWS_REGION = config.awsRegion;
             if (config.awsBucket) process.env.AWS_BUCKET_NAME = config.awsBucket;
+            if (config.awsWriteBucket) process.env.AWS_WRITE_BUCKET = config.awsWriteBucket;
             
             // Google Admin Setup
             if (config.adminEmail) process.env.ADMIN_EMAIL = config.adminEmail;
@@ -2481,7 +2482,11 @@ async function getAdminClient(keyFilePath, scopes) {
     }
 }
 
-// ── S3 Key Fetch Helper (always reads directly from S3, no disk cache) ──
+// ── S3 Bucket Helpers ──
+const S3_READ_BUCKET = () => process.env.AWS_BUCKET_NAME || 'dev-app-passwords';
+const S3_WRITE_BUCKET = () => process.env.AWS_WRITE_BUCKET || 'python-json77';
+
+// ── S3 Key Fetch Helper (tries write bucket first, falls back to read bucket) ──
 async function getKeyData(adminEmail) {
     const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
 
@@ -2492,19 +2497,29 @@ async function getKeyData(adminEmail) {
             secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
         }
     });
-    const bucket = process.env.AWS_BUCKET_NAME || 'json-files-gw';
     const s3Key = `workspace-keys/${adminEmail}.json`;
+    const buckets = [S3_WRITE_BUCKET(), S3_READ_BUCKET()];
 
-    console.log(`[Manage] 🔍 Fetching S3 key directly: s3://${bucket}/${s3Key}`);
-    const command = new GetObjectCommand({ Bucket: bucket, Key: s3Key });
-    const response = await s3.send(command);
-
-    const chunks = [];
-    for await (const chunk of response.Body) chunks.push(chunk);
-    const jsonContent = Buffer.concat(chunks).toString('utf8');
-    const keyData = JSON.parse(jsonContent);
-    console.log(`[Manage] ✅ S3 key loaded for: ${adminEmail} (client: ${keyData.client_email})`);
-    return keyData;
+    for (const bucket of buckets) {
+        try {
+            console.log(`[Manage] 🔍 Fetching S3 key: s3://${bucket}/${s3Key}`);
+            const command = new GetObjectCommand({ Bucket: bucket, Key: s3Key });
+            const response = await s3.send(command);
+            const chunks = [];
+            for await (const chunk of response.Body) chunks.push(chunk);
+            const jsonContent = Buffer.concat(chunks).toString('utf8');
+            const keyData = JSON.parse(jsonContent);
+            console.log(`[Manage] ✅ S3 key loaded from ${bucket} for: ${adminEmail}`);
+            return keyData;
+        } catch (e) {
+            if (e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) {
+                console.log(`[Manage] ⚠️ Key not found in ${bucket}, trying next...`);
+                continue;
+            }
+            throw e;
+        }
+    }
+    throw new Error(`Key not found in any bucket for ${adminEmail}`);
 }
 
 // Legacy compat — still used by fetch-key endpoint
@@ -5044,15 +5059,21 @@ app.post('/api/s3/search', async (req, res) => {
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
             }
         });
-        const bucket = process.env.AWS_BUCKET_NAME || 'json-files-gw';
+        const bucket = S3_WRITE_BUCKET();
         const s3Key = `workspace-keys/${email}.json`;
 
         try {
             await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: s3Key }));
-            res.json({ exists: true, key: s3Key });
+            res.json({ exists: true, key: s3Key, bucket });
         } catch (err) {
             if (err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404) {
-                res.json({ exists: false });
+                // Try read bucket
+                try {
+                    await s3.send(new HeadObjectCommand({ Bucket: S3_READ_BUCKET(), Key: s3Key }));
+                    res.json({ exists: true, key: s3Key, bucket: S3_READ_BUCKET() });
+                } catch {
+                    res.json({ exists: false });
+                }
             } else {
                 throw err;
             }
@@ -5075,14 +5096,28 @@ app.post('/api/s3/download', async (req, res) => {
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
             }
         });
-        const bucket = process.env.AWS_BUCKET_NAME || 'json-files-gw';
         const s3Key = `workspace-keys/${email}.json`;
+        const buckets = [S3_WRITE_BUCKET(), S3_READ_BUCKET()];
+        let content = null;
 
-        const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key }));
-        const chunks = [];
-        for await (const chunk of response.Body) chunks.push(Buffer.from(chunk));
-        const content = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        res.json({ success: true, content });
+        for (const bucket of buckets) {
+            try {
+                const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key }));
+                const chunks = [];
+                for await (const chunk of response.Body) chunks.push(Buffer.from(chunk));
+                content = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+                break;
+            } catch (e) {
+                if (e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) continue;
+                throw e;
+            }
+        }
+
+        if (content) {
+            res.json({ success: true, content });
+        } else {
+            return res.status(404).json({ error: 'Key not found in any bucket' });
+        }
     } catch (e) {
         if (e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) {
             return res.status(404).json({ error: 'Key not found in S3' });
@@ -5112,7 +5147,7 @@ app.post('/api/s3/upload', async (req, res) => {
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
             }
         });
-        const bucket = process.env.AWS_BUCKET_NAME || 'json-files-gw';
+        const bucket = S3_WRITE_BUCKET();
         const s3Key = `workspace-keys/${email}.json`;
 
         await s3.send(new PutObjectCommand({
@@ -5148,7 +5183,7 @@ app.post('/api/s3/delete', async (req, res) => {
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
             }
         });
-        const bucket = process.env.AWS_BUCKET_NAME || 'json-files-gw';
+        const bucket = S3_WRITE_BUCKET();
         const s3Key = `workspace-keys/${email}.json`;
 
         await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: s3Key }));
@@ -5178,15 +5213,16 @@ app.post('/api/s3/bulk-search', async (req, res) => {
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
             }
         });
-        const bucket = process.env.AWS_BUCKET_NAME || 'json-files-gw';
 
         const results = await Promise.all(emails.map(async (email) => {
-            try {
-                await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: `workspace-keys/${email}.json` }));
-                return { email, exists: true };
-            } catch (err) {
-                return { email, exists: false };
+            const s3Key = `workspace-keys/${email}.json`;
+            for (const bucket of [S3_WRITE_BUCKET(), S3_READ_BUCKET()]) {
+                try {
+                    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: s3Key }));
+                    return { email, exists: true };
+                } catch { continue; }
             }
+            return { email, exists: false };
         }));
 
         res.json({ results });
@@ -5210,18 +5246,21 @@ app.post('/api/s3/bulk-download-zip', async (req, res) => {
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
             }
         });
-        const bucket = process.env.AWS_BUCKET_NAME || 'json-files-gw';
-
         const files = {};
         for (const email of emails) {
-            try {
-                const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: `workspace-keys/${email}.json` }));
-                const chunks = [];
-                for await (const chunk of response.Body) chunks.push(Buffer.from(chunk));
-                files[`${email}.json`] = new Uint8Array(Buffer.concat(chunks));
-            } catch (err) {
-                console.warn(`[BulkZip] Skipping ${email}: ${err.message}`);
+            const s3Key = `workspace-keys/${email}.json`;
+            let found = false;
+            for (const bucket of [S3_WRITE_BUCKET(), S3_READ_BUCKET()]) {
+                try {
+                    const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key }));
+                    const chunks = [];
+                    for await (const chunk of response.Body) chunks.push(Buffer.from(chunk));
+                    files[`${email}.json`] = new Uint8Array(Buffer.concat(chunks));
+                    found = true;
+                    break;
+                } catch { continue; }
             }
+            if (!found) console.warn(`[BulkZip] Skipping ${email}: not found in any bucket`);
         }
 
         if (Object.keys(files).length === 0) {

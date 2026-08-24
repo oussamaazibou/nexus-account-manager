@@ -4,7 +4,8 @@ import { Logger } from '../../utils/logger.js';
 
 export class S3Uploader {
     private client: S3Client;
-    private bucketName: string;
+    private readBucket: string;
+    private writeBucket: string;
 
     constructor() {
         this.client = new S3Client({
@@ -15,7 +16,8 @@ export class S3Uploader {
             }
         });
 
-        this.bucketName = process.env.AWS_BUCKET_NAME || 'automation-keys-bucket';
+        this.readBucket = process.env.AWS_BUCKET_NAME || 'dev-app-passwords';
+        this.writeBucket = process.env.AWS_WRITE_BUCKET || 'python-json77';
     }
 
     async downloadJson(key: string): Promise<any> {
@@ -23,11 +25,21 @@ export class S3Uploader {
             Logger.info(`S3 Credentials not configured. Skipping download: ${key}`);
             return null;
         }
-        const command = new GetObjectCommand({ Bucket: this.bucketName, Key: key });
-        const response = await this.client.send(command);
-        const chunks: Buffer[] = [];
-        for await (const chunk of response.Body as any) chunks.push(Buffer.from(chunk));
-        return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        // Try write bucket first, fallback to read bucket
+        for (const bucket of [this.writeBucket, this.readBucket]) {
+            try {
+                const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+                const response = await this.client.send(command);
+                const chunks: Buffer[] = [];
+                for await (const chunk of response.Body as any) chunks.push(Buffer.from(chunk));
+                return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            } catch (e: any) {
+                if (e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) continue;
+                throw e;
+            }
+        }
+        Logger.warn(`Key not found in any bucket: ${key}`);
+        return null;
     }
 
     async uploadFile(key: string, filePath: string): Promise<string> {
@@ -40,14 +52,14 @@ export class S3Uploader {
             const fileStream = fs.createReadStream(filePath);
 
             const command = new PutObjectCommand({
-                Bucket: this.bucketName,
+                Bucket: this.writeBucket,
                 Key: key,
                 Body: fileStream
             });
 
             await this.client.send(command);
             Logger.info(`Upload successfully: ${key}`);
-            return `s3://${this.bucketName}/${key}`;
+            return `s3://${this.writeBucket}/${key}`;
 
         } catch (error: any) {
             Logger.error(`S3 Upload Failed`, error);
