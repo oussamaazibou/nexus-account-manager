@@ -2104,6 +2104,31 @@ app.get('/api/domains/cloudflare', async (req, res) => {
     }
 });
 
+// DELETE /api/domains/cloudflare/:zoneId — delete a Cloudflare zone
+app.delete('/api/domains/cloudflare/:zoneId', async (req, res) => {
+    try {
+        const { zoneId } = req.params;
+        const configPath = path.join(__dirname, 'config.json');
+        if (!fs.existsSync(configPath)) return res.status(400).json({ error: 'config.json not found' });
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const cfEmail = config.cloudflareEmail;
+        const cfKey = config.cloudflareKey;
+        if (!cfKey) return res.status(400).json({ error: 'Cloudflare API key not configured' });
+        const headers = cfEmail
+            ? { 'X-Auth-Email': cfEmail, 'X-Auth-Key': cfKey, 'Content-Type': 'application/json' }
+            : { 'Authorization': `Bearer ${cfKey}`, 'Content-Type': 'application/json' };
+
+        const r = await axios.delete(`https://api.cloudflare.com/client/v4/zones/${zoneId}`, { headers });
+        if (r.data.success) {
+            res.json({ success: true });
+        } else {
+            res.status(500).json({ error: r.data.errors?.[0]?.message || 'Delete failed' });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.response?.data?.errors?.[0]?.message || e.message });
+    }
+});
+
 // GET /api/domains/:zoneId/txt-records — list TXT records for a zone
 app.get('/api/domains/:zoneId/txt-records', async (req, res) => {
     try {

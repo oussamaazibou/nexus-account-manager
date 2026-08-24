@@ -556,6 +556,7 @@ const Domains: React.FC = () => {
     const [filterStatus, setFilterStatus] = useState<'All' | 'Spam' | 'Inbox'>('All');
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [bulkUpdating, setBulkUpdating] = useState(false);
+    const [deletingZones, setDeletingZones] = useState(false);
     const [txtDomain, setTxtDomain] = useState<CloudflareDomain | null>(null);
     const [showBulkAdd, setShowBulkAdd] = useState(false);
 
@@ -669,6 +670,30 @@ const Domains: React.FC = () => {
         else setSelected(new Set(filtered.map(d => d.name)));
     };
 
+    const deleteSelectedZones = async () => {
+        if (selected.size === 0) return;
+        if (!confirm(`⚠️ Delete ${selected.size} domain(s) from Cloudflare?\n\nThis will remove the zone and ALL its DNS records. This cannot be undone.`)) return;
+        setDeletingZones(true);
+        let ok = 0, fail = 0;
+        for (const name of Array.from(selected)) {
+            const zone = domains.find(d => d.name === name);
+            if (!zone) { fail++; continue; }
+            try {
+                const res = await fetch(`${API_URL}/domains/cloudflare/${zone.id}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) ok++; else fail++;
+            } catch { fail++; }
+        }
+        if (ok > 0) {
+            setDomains(prev => prev.filter(d => !selected.has(d.name)));
+            toast(`${ok} domain(s) deleted${fail > 0 ? `, ${fail} failed` : ''}`, fail > 0 ? 'err' : 'ok');
+        } else {
+            toast(`All ${fail} deletion(s) failed`, 'err');
+        }
+        setSelected(new Set());
+        setDeletingZones(false);
+    };
+
     return (
         <div className="space-y-6 animate-in fade-in duration-700">
             {txtDomain && <TxtPanel domain={txtDomain} onClose={() => setTxtDomain(null)} />}
@@ -744,6 +769,9 @@ const Domains: React.FC = () => {
                         </button>
                         <button onClick={() => bulkUpdateStatus('Spam')} disabled={bulkUpdating} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-black text-xs transition-all disabled:opacity-50">
                             {bulkUpdating ? '⏳' : '✕ Mark Spam'}
+                        </button>
+                        <button onClick={deleteSelectedZones} disabled={deletingZones} className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white font-black text-xs transition-all disabled:opacity-50">
+                            {deletingZones ? '⏳ Deleting...' : '🗑 Delete from CF'}
                         </button>
                         <button onClick={() => setSelected(new Set())} className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-black transition-all">
                             Clear
