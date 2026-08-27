@@ -1643,12 +1643,24 @@ const ManageAccounts: React.FC = () => {
                                                                 </div>
                                                             ))}
                                                             {acc.migration && (
-                                                                <div className="flex items-center justify-between gap-2 text-xs py-1.5 border-t border-white/5">
-                                                                    <span className="font-mono truncate">→ {acc.migration.targetDomain}</span>
-                                                                    {acc.migration.error ? (
-                                                                        <span className="text-red-400 font-bold shrink-0">✕ {acc.migration.error}</span>
-                                                                    ) : (
-                                                                        <span className="text-emerald-400 font-bold shrink-0">✓ {acc.migration.movedCount}/{acc.migration.total} migrated</span>
+                                                                <div className="text-xs py-1.5 border-t border-white/5">
+                                                                    <div className="flex items-center justify-between gap-2">
+                                                                        <span className="font-mono truncate">→ {acc.migration.targetDomain}</span>
+                                                                        {acc.migration.error ? (
+                                                                            <span className="text-red-400 font-bold shrink-0">✕ {acc.migration.error}</span>
+                                                                        ) : acc.migration.errors && acc.migration.errors.length > 0 ? (
+                                                                            <span className="text-amber-400 font-bold shrink-0">⚠ {acc.migration.movedCount}/{acc.migration.total} migrated ({acc.migration.errors.length} failed)</span>
+                                                                        ) : (
+                                                                            <span className="text-emerald-400 font-bold shrink-0">✓ {acc.migration.movedCount}/{acc.migration.total} migrated</span>
+                                                                        )}
+                                                                    </div>
+                                                                    {acc.migration.errors && acc.migration.errors.length > 0 && (
+                                                                        <div className="mt-1 pl-2 text-[10px] text-red-300/80 max-h-20 overflow-y-auto leading-tight">
+                                                                            {acc.migration.errors.slice(0, 6).map((err: any, i: number) => (
+                                                                                <div key={i} className="truncate">• {err.user}: {err.error}</div>
+                                                                            ))}
+                                                                            {acc.migration.errors.length > 6 && <div>…and {acc.migration.errors.length - 6} more</div>}
+                                                                        </div>
                                                                     )}
                                                                 </div>
                                                             )}

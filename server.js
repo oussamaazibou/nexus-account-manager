@@ -3764,6 +3764,10 @@ async function getUnverifiedDomains(adminEmail, keyData, log = () => {}) {
 }
 
 // ── Migrate all users on an account to a target domain (excluding admin) ────
+// Robust version: throttles requests + retries transient failures (rate-limit 429,
+// 5xx, network) with exponential backoff so bulk migrations don't silently drop users.
+const migrateSleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 async function migrateUsersToDomain(adminEmail, targetDomain, log = () => {}) {
     const { google } = await import('googleapis');
     const keyData = await getKeyData(adminEmail);
@@ -3775,6 +3779,8 @@ async function migrateUsersToDomain(adminEmail, targetDomain, log = () => {}) {
     });
     const admin = google.admin({ version: 'directory_v1', auth });
 
+    const targetSuffix = `@${targetDomain}`;
+
     // List all users
     let allUsers = [], pageToken = null;
     do {
@@ -3784,30 +3790,64 @@ async function migrateUsersToDomain(adminEmail, targetDomain, log = () => {}) {
     } while (pageToken);
 
     // Filter: skip admin + users already on target domain
-    const toMigrate = allUsers.filter(u => u.primaryEmail !== adminEmail && !u.primaryEmail.endsWith(`@${targetDomain}`));
+    const toMigrate = allUsers.filter(u => {
+        if (!u.primaryEmail || u.primaryEmail === adminEmail) return false;
+        if (u.primaryEmail.endsWith(targetSuffix)) return false;
+        return true;
+    });
 
     if (toMigrate.length === 0) {
         log(`[Migrate] ${adminEmail}: No users to migrate to ${targetDomain}`);
-        return { movedCount: 0, total: 0, errors: [] };
+        return { movedCount: 0, total: 0, errors: [], retriesUsed: 0 };
     }
+
+    const RETRIES = 5;          // attempts per user
+    const BASE_DELAY = 900;     // throttle between requests (ms)
+    const maxBackoffMs = 12000;
+
+    const updateWithRetry = async (user, newEmail, logFn) => {
+        let lastErr = null;
+        for (let attempt = 1; attempt <= RETRIES; attempt++) {
+            try {
+                await admin.users.update({
+                    userKey: user.primaryEmail,
+                    requestBody: { primaryEmail: newEmail }
+                });
+                return { ok: true };
+            } catch (e) {
+                lastErr = e;
+                // Permanent errors (404 user gone, 400/403 bad request, 409 conflict) — retrying won't help.
+                const code = e && (e.code || e.status);
+                if (attempt === 1 && code && [400, 403, 404, 409, 412].includes(code)) {
+                    return { ok: false, error: e.message, permanent: true };
+                }
+                const backoff = Math.min(BASE_DELAY * Math.pow(2, attempt - 1), maxBackoffMs);
+                logFn(`[Migrate] Retry ${user.primaryEmail} → ${newEmail} (attempt ${attempt}/${RETRIES}, waiting ${backoff}ms): ${e.message}`);
+                await migrateSleep(backoff);
+            }
+        }
+        return { ok: false, error: lastErr && lastErr.message || 'unknown error' };
+    };
 
     let movedCount = 0;
     const errors = [];
+    let retriesUsed = 0;
     for (const user of toMigrate) {
         const username = user.primaryEmail.split('@')[0];
-        try {
-            await admin.users.update({
-                userKey: user.primaryEmail,
-                requestBody: { primaryEmail: `${username}@${targetDomain}` }
-            });
+        const newEmail = `${username}@${targetDomain}`;
+        const res = await updateWithRetry(user, newEmail, (m) => { retriesUsed++; log(m); });
+        if (res.ok) {
             movedCount++;
-        } catch (e) {
-            errors.push({ user: user.primaryEmail, error: e.message });
+        } else {
+            if (!res.permanent) retriesUsed++;
+            errors.push({ user: user.primaryEmail, error: res.error });
         }
+        // Throttle between users to stay under Google's write quota
+        await migrateSleep(BASE_DELAY);
     }
 
-    log(`[Migrate] ${adminEmail}: Moved ${movedCount}/${toMigrate.length} users to ${targetDomain}`);
-    return { movedCount, total: toMigrate.length, errors };
+    log(`[Migrate] ${adminEmail}: Moved ${movedCount}/${toMigrate.length} users to ${targetDomain} (retries: ${retriesUsed})`);
+    return { movedCount, total: toMigrate.length, errors, retriesUsed };
 }
 
 async function runDomainVerifyJob(job) {
