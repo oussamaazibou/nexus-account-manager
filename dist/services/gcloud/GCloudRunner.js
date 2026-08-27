@@ -80,6 +80,41 @@ export class GCloudRunner {
     async getActiveAccount() {
         return this.runCommand('gcloud config get-value account');
     }
+    // List all project IDs visible to the currently authenticated account.
+    async listProjects() {
+        const output = await this.runCommand(`gcloud projects list --format="value(projectId)"`);
+        return output.split('\n').map(l => l.trim()).filter(Boolean);
+    }
+    // Delete a project with a bounded wait + retry for transient propagation.
+    async deleteProject(projectId) {
+        const MAX_ATTEMPTS = 5;
+        let attempts = 0;
+        while (attempts < MAX_ATTEMPTS) {
+            attempts++;
+            try {
+                // --quiet avoids the interactive "Do you want to continue?" prompt.
+                await this.runCommand(`gcloud projects delete ${projectId} --quiet`);
+                Logger.info(`✅ Project ${projectId} delete command accepted (attempt ${attempts})`);
+                return;
+            }
+            catch (error) {
+                const msg = (error.message || '').toLowerCase();
+                const wasAnd = msg.includes('and 1 more');
+                const isTransient = /429|rate limit|quota|timed out|network|deadline/i.test(msg);
+                // Project already deleted / not found — treat as success.
+                if (msg.includes('not found') || msg.includes('does not exist') || wasAnd) {
+                    Logger.info(`Project ${projectId} already deleted / not present — nothing to do.`);
+                    return;
+                }
+                if (attempts >= MAX_ATTEMPTS || !isTransient) {
+                    throw error;
+                }
+                const wait = attempts * 10000;
+                Logger.info(`⏳ Project ${projectId} deletion not yet effective (${msg}). Retrying in ${wait / 1000}s... (attempt ${attempts}/${MAX_ATTEMPTS})`);
+                await new Promise(r => setTimeout(r, wait));
+            }
+        }
+    }
     // --- 6.1 Project & Service Account Initialization ---
     async createProject(projectId, name = 'my first project', orgId) {
         try {

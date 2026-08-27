@@ -451,6 +451,34 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
     }
   };
 
+  const [recreateRunningIds, setRecreateRunningIds] = useState<Set<string>>(new Set());
+  const [recreateResults, setRecreateResults] = useState<Record<string, 'queued' | 'error'>>({});
+
+  const runRecreate = async (acc: Account) => {
+    if (!window.confirm(`Delete this account's existing GCP project(s) and re-run full setup for ${acc.email}?\n\nThis removes the current project and creates a brand-new one with all scopes/apis/setup.`)) return;
+    setRecreateRunningIds(prev => new Set(prev).add(acc.id));
+    try {
+      const res = await fetch('/api/jobs/recreate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userEmail: acc.email, userPassword: acc.password, headless: false })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRecreateResults(prev => ({ ...prev, [acc.id]: 'queued' }));
+        setTimeout(() => setRecreateResults(prev => { const n = { ...prev }; delete n[acc.id]; return n; }), 6000);
+      } else {
+        setRecreateResults(prev => ({ ...prev, [acc.id]: 'error' }));
+        setTimeout(() => setRecreateResults(prev => { const n = { ...prev }; delete n[acc.id]; return n; }), 3000);
+      }
+    } catch (e) {
+      setRecreateResults(prev => ({ ...prev, [acc.id]: 'error' }));
+      setTimeout(() => setRecreateResults(prev => { const n = { ...prev }; delete n[acc.id]; return n; }), 3000);
+    } finally {
+      setRecreateRunningIds(prev => { const n = new Set(prev); n.delete(acc.id); return n; });
+    }
+  };
+
   const checkAccountStatus = async (acc: Account) => {
     setStatusCheckingIds(prev => new Set(prev).add(acc.id));
     setStatusResults(prev => { const n = { ...prev } as Record<string, string>; delete n[acc.id]; return n; });
@@ -1125,6 +1153,29 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                               ) : (
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" /></svg>
+                              )}
+                            </button>
+                            {/* Recreate Project Button: delete existing GCP project(s) + full setup */}
+                            <button
+                              onClick={() => runRecreate(acc)}
+                              disabled={recreateRunningIds.has(acc.id)}
+                              title="Delete existing GCP project(s) and re-run full setup (new project + scopes)"
+                              className={`p-2.5 rounded-xl transition-all shrink-0 font-black text-xs ${
+                                recreateResults[acc.id] === 'queued'
+                                  ? 'text-emerald-400 bg-emerald-500/10'
+                                  : recreateResults[acc.id] === 'error'
+                                    ? 'text-rose-400 bg-rose-500/10'
+                                    : 'text-cyan-400 hover:bg-cyan-500/10'
+                              } disabled:opacity-40`}
+                            >
+                              {recreateRunningIds.has(acc.id) ? (
+                                <svg className="animate-spin" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                              ) : recreateResults[acc.id] === 'queued' ? (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                              ) : recreateResults[acc.id] === 'error' ? (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                              ) : (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                               )}
                             </button>
                             {/* Age 18+ Button */}

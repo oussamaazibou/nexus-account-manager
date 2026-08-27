@@ -902,6 +902,37 @@ app.post('/api/jobs/gcloud', async (req, res) => {
     }
 });
 
+// ── Recreate project: delete the account's existing GCP project(s), then run the
+//    full new-account setup (project, APIs, SA, key, DWD, authenticator, 2SV). ──
+app.post('/api/jobs/recreate', async (req, res) => {
+    try {
+        const { userEmail, userPassword, headless } = req.body;
+        if (!userEmail || !userPassword) {
+            return res.status(400).json({ error: 'userEmail and userPassword required' });
+        }
+
+        const domain = userEmail.split('@')[1] || 'workspace';
+        const projectId = `${domain.replace(/[^a-z0-9]/gi, '-').toLowerCase().substring(0, 20)}-${Date.now().toString().slice(-6)}`;
+
+        const job = await prepQueue.add('prep-job', {
+            projectId,
+            userEmail,
+            userPassword,
+            saName: 'automation-sa',
+            headless: headless !== false,
+            mode: 'gcloud-only',
+            recreate: true      // delete existing project(s) first, then full setup
+        });
+
+        startWorker();
+        console.log(`[recreate-project] Queued job ${job.id} for ${userEmail} (new project ${projectId})`);
+        res.json({ success: true, jobId: job.id, projectId });
+    } catch (error) {
+        console.error('[recreate-project] Error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 // Get jobs
 // Get jobs (from accounts.txt + BullMQ status)

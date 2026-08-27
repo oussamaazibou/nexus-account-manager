@@ -23,6 +23,7 @@ interface PrepJobData {
     jobId?: string;
     headless?: boolean;
     mode?: string; // 'phone-only' → skip everything except phone verification
+    recreate?: boolean; // delete the account's existing GCP project(s) before full setup
 }
 
 export class PrepWorker {
@@ -266,6 +267,32 @@ export class PrepWorker {
 
         // We no longer wait for gcloud organizations list because it's too slow.
         // We will create the project immediately and fetch the Org ID from its ancestors.
+
+        // ── RECREATE-PROJECT MODE ─────────────────────────────────────────────
+        // Delete any existing project(s) owned by this account, then fall through
+        // to the normal full setup (project create, APIs, SA, key, DWD, 2SV, upload).
+        if (data.recreate) {
+            Logger.info(`♻️ [recreate] Deleting existing GCP project(s) for ${userEmail}…`);
+            try {
+                const existing = await gcloud.listProjects();
+                const projectsToDelete = existing.length ? existing : [projectId];
+                Logger.info(`♻️ [recreate] Found ${projectsToDelete.length} project(s): ${projectsToDelete.join(', ')}`);
+                for (const oldId of projectsToDelete) {
+                    try {
+                        await gcloud.deleteProject(oldId);
+                        Logger.info(`♻️ [recreate] Deleted project ${oldId}`);
+                    } catch (delErr: any) {
+                        // Not fatal — proceed; the new project ID is unique anyway.
+                        Logger.warn(`♻️ [recreate] Could not delete ${oldId}: ${delErr.message}`);
+                    }
+                }
+                // Small delay so Google fully releases the old project before we create a new one.
+                await new Promise(r => setTimeout(r, 10000));
+            } catch (listErr: any) {
+                Logger.warn(`♻️ [recreate] Failed to list projects — continuing with fresh project anyway: ${listErr.message}`);
+            }
+            Logger.info(`♻️ [recreate] Proceeding with full setup on new project ${projectId}`);
+        }
 
         // 1. Project Init
         Logger.info("Step 1: Init Project");
