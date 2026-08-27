@@ -454,8 +454,8 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
   const [recreateRunningIds, setRecreateRunningIds] = useState<Set<string>>(new Set());
   const [recreateResults, setRecreateResults] = useState<Record<string, 'queued' | 'error'>>({});
 
-  const runRecreate = async (acc: Account) => {
-    if (!window.confirm(`Delete this account's existing GCP project(s) and re-run full setup for ${acc.email}?\n\nThis removes the current project and creates a brand-new one with all scopes/apis/setup.`)) return;
+  const runRecreate = async (acc: Account, skipConfirm = false) => {
+    if (!skipConfirm && !window.confirm(`Delete this account's existing GCP project(s) and re-run full setup for ${acc.email}?\n\nThis removes the current project and creates a brand-new one with all scopes/apis/setup.`)) return;
     setRecreateRunningIds(prev => new Set(prev).add(acc.id));
     try {
       const res = await fetch('/api/jobs/recreate', {
@@ -535,9 +535,8 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
   const runBulkGCloud = async () => {
     if (selectedIds.size === 0) return;
     toast(`Starting GCloud setup for ${selectedIds.size} account(s)`, 'info');
-    const dataPool = accounts?.length ? accounts : resultAccounts;
     for (const id of Array.from(selectedIds)) {
-      const acc = dataPool.find(a => a.id === id);
+      const acc = validAccounts.find(a => a.id === id);
       if (acc) {
         runGCloud(acc);
         await new Promise(r => setTimeout(r, 1000));
@@ -549,11 +548,10 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
     if (selectedIds.size === 0) return;
     if (!window.confirm(`Delete existing GCP project(s) and re-run full setup for ${selectedIds.size} selected account(s)?`)) return;
     toast(`Recreating project for ${selectedIds.size} account(s)`, 'info');
-    const dataPool = accounts?.length ? accounts : resultAccounts;
     for (const id of Array.from(selectedIds)) {
-      const acc = dataPool.find(a => a.id === id);
+      const acc = validAccounts.find(a => a.id === id);
       if (acc) {
-        runRecreate(acc);
+        runRecreate(acc, true);
         await new Promise(r => setTimeout(r, 1000));
       }
     }
