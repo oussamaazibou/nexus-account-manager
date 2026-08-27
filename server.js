@@ -3507,6 +3507,37 @@ async function runBulkUserJob() {
     const headless = getBulkHeadless();
     dynuLog('INFO', `👥 Bulk user creation start | accounts=${accounts.length} | concurrency=${concurrency} | users/account=${bulkUserJob.usersPerAccount} | proxies=${proxyPool.length} | headless=${headless} | sms=${skipSms ? 'OFF' : 'ON'}`);
 
+    // Max attempts per account (1 initial try + auto-retries). Transient
+    // network/proxy/challenge failures shouldn't mark an account dead on the
+    // first try — retry a couple of times with a short pause in between.
+    const MAX_ATTEMPTS = 3;
+    const RETRY_DELAY_MS = 8000;
+
+    const processAttempt = async (acc, idx, attempt) => {
+        const proxy = proxyPool.length ? proxyPool[idx % proxyPool.length] : null;
+        dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ▶️ ${acc.email}${acc.targetDomain ? ` -> ${acc.targetDomain}` : ''} | attempt ${attempt}/${MAX_ATTEMPTS}${proxy ? ` | proxy ${proxy.host}:${proxy.port}` : ' | no proxy'}`);
+        const logger = new BulkThreadLogger(acc);
+        const creator = new GoogleWorkspaceUserCreator(acc.email, acc.password, {
+            threadId: idx + 1,
+            headless,
+            logger,
+            skipSms,
+            heroSms,
+            usersCount: bulkUserJob.usersPerAccount,
+            targetDomain: acc.targetDomain || '',
+        });
+        const ok = await creator.run(proxy);
+        acc.usersCreated = creator.usersCreated;
+        if (ok) {
+            acc.status = 'done';
+            acc.error = null;
+            return true;
+        }
+        const lastIssue = [...logger.buf].reverse().find(l => l.level === 'ERROR' || l.level === 'WARN');
+        acc.error = lastIssue ? lastIssue.msg.replace(/^.*?\] [ ]?/, '') : 'login or user creation failed';
+        return false;
+    };
+
     let nextIndex = 0;
     const worker = async () => {
         while (!bulkUserJob.stopRequested) {
@@ -3524,42 +3555,33 @@ async function runBulkUserJob() {
             }
             acc.status = 'running';
             acc.startedAt = new Date().toISOString();
-            const proxy = proxyPool.length ? proxyPool[idx % proxyPool.length] : null;
-            dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ▶️ ${acc.email}${acc.targetDomain ? ` -> ${acc.targetDomain}` : ''} | thread start${proxy ? ` | proxy ${proxy.host}:${proxy.port}` : ' | no proxy'}`);
-            try {
-                const logger = new BulkThreadLogger(acc);
-                const creator = new GoogleWorkspaceUserCreator(acc.email, acc.password, {
-                    threadId: idx + 1,
-                    headless,
-                    logger,
-                    skipSms,
-                    heroSms,
-                    usersCount: bulkUserJob.usersPerAccount,
-                    targetDomain: acc.targetDomain || '',
-                });
-                const ok = await creator.run(proxy);
-                acc.usersCreated = creator.usersCreated;
-                if (ok) {
-                    acc.status = 'done';
-                    acc.error = null;
-                    bulkUserJob.ok++;
-                    dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ✅ ${acc.email} — ${creator.usersCreated} users created`);
-                } else {
-                    acc.status = 'failed';
-                    const lastIssue = [...logger.buf].reverse().find(l => l.level === 'ERROR' || l.level === 'WARN');
-                    acc.error = lastIssue ? lastIssue.msg.replace(/^.*?\] [ ]?/, '') : 'login or user creation failed';
-                    bulkUserJob.failed++;
-                    dynuLog('ERROR', `👥 [${idx + 1}/${accounts.length}] ❌ ${acc.email} — ${acc.error}`);
+
+            let success = false;
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS && !success && !bulkUserJob.stopRequested; attempt++) {
+                try {
+                    if (attempt > 1) await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+                    success = await processAttempt(acc, idx, attempt);
+                    if (success) break;
+                } catch (e) {
+                    acc.error = e.message;
                 }
-            } catch (e) {
-                acc.status = 'failed';
-                acc.error = e.message;
-                bulkUserJob.failed++;
-                dynuLog('ERROR', `👥 [${idx + 1}/${accounts.length}] ❌ ${acc.email} — ${e.message}`);
-            } finally {
-                acc.finishedAt = new Date().toISOString();
-                bulkUserJob.done++;
+                if (!success && attempt < MAX_ATTEMPTS) {
+                    dynuLog('WARN', `👥 [${idx + 1}/${accounts.length}] ↪ ${acc.email} — attempt ${attempt} failed (${acc.error}), retrying…`);
+                }
             }
+
+            if (success) {
+                acc.status = 'done';
+                acc.error = null;
+                bulkUserJob.ok++;
+                dynuLog('INFO', `👥 [${idx + 1}/${accounts.length}] ✅ ${acc.email} — ${acc.usersCreated} users created`);
+            } else {
+                acc.status = 'failed';
+                bulkUserJob.failed++;
+                dynuLog('ERROR', `👥 [${idx + 1}/${accounts.length}] ❌ ${acc.email} — ${acc.error}`);
+            }
+            acc.finishedAt = new Date().toISOString();
+            bulkUserJob.done++;
         }
     };
 
