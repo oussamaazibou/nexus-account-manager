@@ -237,7 +237,9 @@ export class PrepWorker {
                 }
 
                 const { gcloudAuthLogin } = await import('../../gcloudAuth.cjs') as any;
-                await gcloudAuthLogin(userEmail, userPassword, jobId, configDir, headless as any);
+                // For recreate-project we MUST authenticate as the real user account
+                // (not the service account) so gcloud can delete/create the user's projects.
+                await gcloudAuthLogin(userEmail, userPassword, jobId, configDir, headless as any, null, !!data.recreate);
 
                 const activeAccount = await gcloud.getActiveAccount();
                 const activeLower = activeAccount.trim().toLowerCase();

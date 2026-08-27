@@ -205,7 +205,9 @@ export class PrepWorker {
                     Logger.info(`✅ SA key already cached locally for ${userEmail}`);
                 }
                 const { gcloudAuthLogin } = await import('../../gcloudAuth.cjs');
-                await gcloudAuthLogin(userEmail, userPassword, jobId, configDir, headless);
+                // For recreate-project we MUST authenticate as the real user account
+                // (not the service account) so gcloud can delete/create the user's projects.
+                await gcloudAuthLogin(userEmail, userPassword, jobId, configDir, headless, null, !!data.recreate);
                 const activeAccount = await gcloud.getActiveAccount();
                 const activeLower = activeAccount.trim().toLowerCase();
                 const isServiceAccount = activeLower.endsWith('.iam.gserviceaccount.com');

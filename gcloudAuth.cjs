@@ -2,8 +2,8 @@ const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-async function gcloudAuthLogin(email, password, tilingId = 1, configDir = null, headless = true, keyFilePath = null) {
-    console.log(`[gcloud Auth] Authenticating ${email} (Service Account mode)...`);
+async function gcloudAuthLogin(email, password, tilingId = 1, configDir = null, headless = true, keyFilePath = null, forceUserAuth = false) {
+    console.log(`[gcloud Auth] Authenticating ${email}${forceUserAuth ? ' (forced User OAuth mode)' : ' (Service Account mode)'}...`);
 
     const isWindows = process.platform === 'win32';
     const gcloudPath = process.env.GCLOUD_PATH || (isWindows ? 'C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin\\gcloud.cmd' : 'gcloud');
@@ -30,13 +30,13 @@ async function gcloudAuthLogin(email, password, tilingId = 1, configDir = null, 
     };
 
     let resolvedKeyFile = keyFilePath;
-    if (!resolvedKeyFile) {
+    if (!resolvedKeyFile && !forceUserAuth) {
         const safeEmail = email.replace('@', '_at_').replace(/\./g, '_');
         const tmpKeyPath = path.join(__dirname, 'tmp', 'manage-keys', `${safeEmail}.json`);
         if (fs.existsSync(tmpKeyPath)) { resolvedKeyFile = tmpKeyPath; console.log(`[gcloud Auth] Found cached key: ${tmpKeyPath}`); }
     }
 
-    if (resolvedKeyFile && fs.existsSync(resolvedKeyFile)) {
+    if (resolvedKeyFile && fs.existsSync(resolvedKeyFile) && !forceUserAuth) {
         console.log(`[gcloud Auth] Using service account key: ${resolvedKeyFile}`);
         try {
             await runGcloud(['auth', 'activate-service-account', `--key-file=${resolvedKeyFile}`], 60000);
