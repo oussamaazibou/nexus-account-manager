@@ -545,6 +545,20 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
     }
   };
 
+  const runBulkRecreate = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Delete existing GCP project(s) and re-run full setup for ${selectedIds.size} selected account(s)?`)) return;
+    toast(`Recreating project for ${selectedIds.size} account(s)`, 'info');
+    const dataPool = accounts?.length ? accounts : resultAccounts;
+    for (const id of Array.from(selectedIds)) {
+      const acc = dataPool.find(a => a.id === id);
+      if (acc) {
+        runRecreate(acc);
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+  };
+
   // ────────────────────────────────────────────────────────────────────────
 
   const handleMoveToQueueLocal = async (ids: string[]) => {
@@ -852,6 +866,15 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
               Run GCloud
+            </button>
+            {/* Bulk Recreate Project: delete existing GCP project(s) + full setup */}
+            <button
+              onClick={runBulkRecreate}
+              title="Delete existing GCP project(s) and re-run full setup for selected accounts"
+              className="bg-cyan-500 text-white font-bold px-5 py-2 rounded-lg text-sm hover:bg-cyan-400 transition-all shadow-lg active:scale-95 flex items-center gap-2 whitespace-nowrap"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              Recreate Project
             </button>
             {/* Assign to User */}
             <div className="flex items-center gap-3">
