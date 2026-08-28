@@ -73,6 +73,8 @@ const ManageAccounts: React.FC = () => {
     // Migrate & delete domain state
     const [deletingAliases, setDeletingAliases] = useState<Record<string, boolean>>({});
     const [aliasResults, setAliasResults] = useState<Record<string, { deletedCount: number; error?: string }>>({});
+    const [deletingAllUsers, setDeletingAllUsers] = useState(false);
+    const [deleteAllUsersResult, setDeleteAllUsersResult] = useState<{ deletedCount?: number; total?: number; error?: string } | null>(null);
 
     // Bulk Info State
     const [selectedCollection, setSelectedCollection] = useState<string>('All');
@@ -736,6 +738,39 @@ const ManageAccounts: React.FC = () => {
         }
     };
 
+    // Delete ALL non-admin users in the workspace (across all domains).
+    const handleDeleteAllUsers = async () => {
+        if (!adminEmail) return;
+        if (!window.confirm(`DELETE ALL non-admin users in this workspace (@${adminEmail.split('@')[1]})?\n\nThis removes every user across all domains. The admin account (${adminEmail}) is kept. This CANNOT be undone.`)) return;
+        setDeletingAllUsers(true);
+        setDeleteAllUsersResult(null);
+        try {
+            const res = await fetch(`${API_URL}/manage/delete-all-users`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ adminEmail })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setDeleteAllUsersResult({ deletedCount: data.deletedCount, total: data.total });
+                toast(`Deleted ${data.deletedCount}/${data.total} user(s)`, data.deletedCount > 0 ? 'ok' : 'info');
+                // Keep the admin in the local list, drop everyone else
+                if (wsInfo) setWsInfo(prev => prev ? {
+                    ...prev,
+                    users: prev.users.filter(u => u.email === adminEmail || u.isAdmin)
+                } : prev);
+            } else {
+                setDeleteAllUsersResult({ error: data.error });
+                toast(`Error: ${data.error}`, 'err');
+            }
+        } catch (e: any) {
+            setDeleteAllUsersResult({ error: e.message });
+            toast(`Error: ${e.message}`, 'err');
+        } finally {
+            setDeletingAllUsers(false);
+        }
+    };
+
     const filteredUsers = wsInfo?.users.filter(u =>
         u.email.toLowerCase().includes(searchFilter.toLowerCase()) ||
         (u.name || '').toLowerCase().includes(searchFilter.toLowerCase())
@@ -1240,6 +1275,20 @@ const ManageAccounts: React.FC = () => {
                                             <div className="text-2xl font-black text-emerald-400">{wsInfo.domains.length}</div>
                                             <div className="text-xs text-[var(--text-muted)] uppercase">Domains</div>
                                         </div>
+                                    </div>
+                                )}
+                                {wsInfo && (
+                                    <button
+                                        onClick={handleDeleteAllUsers}
+                                        disabled={deletingAllUsers}
+                                        className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-sm transition-all disabled:opacity-50"
+                                    >
+                                        {deletingAllUsers ? '⏳ Deleting...' : `🗑️ Delete All Users (@${adminEmail.split('@')[1]})`}
+                                    </button>
+                                )}
+                                {deleteAllUsersResult && (
+                                    <div className={`text-xs px-3 py-2 rounded-lg border ${deleteAllUsersResult.error ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'}`}>
+                                        {deleteAllUsersResult.error ? `❌ ${deleteAllUsersResult.error}` : `✅ Deleted ${deleteAllUsersResult.deletedCount}/${deleteAllUsersResult.total} user(s)`}
                                     </div>
                                 )}
                             </div>

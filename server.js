@@ -4292,6 +4292,57 @@ app.post('/api/manage/delete-domain-aliases', async (req, res) => {
     }
 });
 
+// Delete ALL non-admin users in the workspace (across all domains), keeping the
+// admin account intact.
+app.post('/api/manage/delete-all-users', async (req, res) => {
+    try {
+        const { adminEmail } = req.body;
+        if (!adminEmail) return res.status(400).json({ error: 'adminEmail required' });
+
+        const { google } = await import('googleapis');
+        const keyData = await getKeyData(adminEmail);
+        const auth = new google.auth.JWT({
+            email: keyData.client_email,
+            key: keyData.private_key,
+            scopes: ['https://www.googleapis.com/auth/admin.directory.user'],
+            subject: adminEmail
+        });
+        const admin = google.admin({ version: 'directory_v1', auth });
+
+        // List ALL users in the customer (whole workspace).
+        let allUsers = [], pageToken = null;
+        do {
+            const r = await admin.users.list({ customer: 'my_customer', maxResults: 500, pageToken, projection: 'full' });
+            allUsers = allUsers.concat(r.data.users || []);
+            pageToken = r.data.nextPageToken;
+        } while (pageToken);
+
+        const toDelete = allUsers.filter(u =>
+            u.primaryEmail !== adminEmail &&
+            !u.isAdmin
+        );
+
+        console.log(`[DeleteAllUsers] Found ${toDelete.length} non-admin user(s) to delete across @${adminEmail.split('@')[1]}`);
+        let deletedCount = 0;
+        const errors = [];
+
+        for (const user of toDelete) {
+            try {
+                await admin.users.delete({ userKey: user.primaryEmail });
+                deletedCount++;
+                console.log(`[DeleteAllUsers] Deleted ${user.primaryEmail}`);
+            } catch (e) {
+                errors.push({ user: user.primaryEmail, error: e.message });
+            }
+        }
+
+        res.json({ success: true, deletedCount, total: toDelete.length, errors });
+    } catch (e) {
+        console.error(`[DeleteAllUsers] ❌ ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // Bulk delete unverified domains across multiple admin accounts
 app.post('/api/manage/bulk-delete-domains', async (req, res) => {
     try {
