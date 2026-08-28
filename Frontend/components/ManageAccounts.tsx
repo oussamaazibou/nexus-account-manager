@@ -357,6 +357,52 @@ const ManageAccounts: React.FC = () => {
     };
 
     const [deletingBulkSuspended, setDeletingBulkSuspended] = useState<boolean>(false);
+    const [deletingBulkUsers, setDeletingBulkUsers] = useState<boolean>(false);
+    const handleBulkDeleteAllUsers = async () => {
+        if (!bulkInfoResults) return;
+        const emails = Object.keys(bulkInfoResults);
+        if (emails.length === 0) return;
+        if (!window.confirm(`This will DELETE ALL non-admin users in each of the ${emails.length} selected workspace account(s).\n\nEvery non-admin user across all domains is removed; only the admin account stays. This CANNOT be undone.`)) return;
+
+        setDeletingBulkUsers(true);
+        let deletedTotal = 0;
+        let failedAccounts = 0;
+        for (const email of emails) {
+            try {
+                const res = await fetch(`${API_URL}/manage/delete-all-users`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ adminEmail: email })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    deletedTotal += data.deletedCount || 0;
+                    setBulkInfoResults((prev: any) => {
+                        if (!prev || !prev[email] || !Array.isArray(prev[email].users)) return prev;
+                        return {
+                            ...prev,
+                            [email]: {
+                                ...prev[email],
+                                users: prev[email].users.filter((u: any) => u.isAdmin)
+                            }
+                        };
+                    });
+                } else {
+                    failedAccounts++;
+                    console.error(`Failed to delete all users for ${email}:`, data.error);
+                }
+            } catch (e) {
+                failedAccounts++;
+                console.error(`Failed to bulk delete all users for ${email}:`, e);
+            }
+        }
+        setDeletingBulkUsers(false);
+        if (failedAccounts > 0) {
+            toast(`Done. Deleted ${deletedTotal} user(s) across ${emails.length} account(s), with ${failedAccounts} error(s)`, 'info');
+        } else {
+            toast(`Done. Deleted ${deletedTotal} user(s) across ${emails.length} account(s)`, 'ok');
+        }
+    };
     const handleBulkDeleteSuspended = async () => {
         if (!bulkInfoResults) return;
         const emails = Object.keys(bulkInfoResults);
@@ -1403,6 +1449,9 @@ const ManageAccounts: React.FC = () => {
                                                 </button>
                                                 <button onClick={handleBulkDeleteSuspended} disabled={deletingBulkSuspended || !bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white text-sm font-bold transition-all shrink-0">
                                                     {deletingBulkSuspended ? '⏳ Deleting...' : '🗑 Suspandeds'}
+                                                </button>
+                                                <button onClick={handleBulkDeleteAllUsers} disabled={deletingBulkUsers || !bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-rose-600/15 text-rose-400 hover:bg-rose-600 hover:text-white text-sm font-bold transition-all shrink-0">
+                                                    {deletingBulkUsers ? '⏳ Deleting...' : '🗑 All Users'}
                                                 </button>
                                                 <button onClick={handleBulkLoadInfo} disabled={bulkInfoLoading || filteredAccounts.length === 0} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-bold transition-all shrink-0">
                                                     {bulkInfoLoading ? '⏳ Loading...' : '🔄 Refresh Bulk'}
