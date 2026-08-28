@@ -5470,6 +5470,77 @@ app.post('/api/s3/local-upload', async (req, res) => {
     }
 });
 
+// Search for a specific account's local JSON (project-root <domain>.json and
+// the tmp/manage-keys cache), returning it plus whether an old key exists in S3.
+app.post('/api/s3/local-search', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ error: 'email required' });
+
+        const domain = email.split('@')[1] || null;
+        if (!domain) return res.status(400).json({ error: 'Invalid email — must include a domain' });
+
+        // Candidate local files for this account
+        const candidates = [];
+        const rootPath = path.join(__dirname, `${domain}.json`);
+        if (fs.existsSync(rootPath)) candidates.push(rootPath);
+
+        const safeEmail = email.replace('@', '_at_').replace(/\./g, '_');
+        const cachedPath = path.join(__dirname, 'tmp', 'manage-keys', `${safeEmail}.json`);
+        if (fs.existsSync(cachedPath)) candidates.push(cachedPath);
+
+        if (candidates.length === 0) {
+            return res.json({ success: true, found: false, email, message: `No local JSON found for ${email}` });
+        }
+
+        // Prefer the project-root <domain>.json; fall back to the cache
+        const localPath = candidates[0];
+        let parsed = null;
+        try {
+            parsed = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+        } catch (e) {
+            parsed = null;
+        }
+
+        const isValid = !!(parsed && parsed.client_email && parsed.private_key);
+
+        // Check if an old key already exists in S3
+        let existsInS3 = false;
+        try {
+            const { S3Client, HeadObjectCommand } = await import('@aws-sdk/client-s3');
+            const s3 = new S3Client({
+                region: process.env.AWS_REGION || 'eu-west-1',
+                credentials: {
+                    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+                    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
+                }
+            });
+            const s3Key = `workspace-keys/${email}.json`;
+            for (const bucket of [S3_WRITE_BUCKET(), S3_READ_BUCKET()]) {
+                try {
+                    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: s3Key }));
+                    existsInS3 = true;
+                    break;
+                } catch { }
+            }
+        } catch (e) { }
+
+        res.json({
+            success: true,
+            found: true,
+            email,
+            filename: path.basename(localPath),
+            location: localPath.includes('manage-keys') ? 'cache' : 'root',
+            client_email: parsed ? parsed.client_email : null,
+            project_id: parsed ? parsed.project_id || '' : '',
+            isValid,
+            existsInS3
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/s3/bulk-search', async (req, res) => {
     try {
         const { emails } = req.body;

@@ -72,6 +72,31 @@ const UploadJSON: React.FC = () => {
         }
     };
 
+    // Local search state
+    const [localSearchEmail, setLocalSearchEmail] = useState('');
+    const [localSearchLoading, setLocalSearchLoading] = useState(false);
+    const [localSearchResult, setLocalSearchResult] = useState<any>(null);
+
+    const handleLocalSearch = async () => {
+        if (!localSearchEmail.trim()) return;
+        setLocalSearchLoading(true);
+        setLocalSearchResult(null);
+        setLocalMessage(null);
+        try {
+            const res = await fetch(`${API_URL}/s3/local-search`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: localSearchEmail.trim() })
+            });
+            const data = await res.json();
+            setLocalSearchResult(data);
+        } catch (e: any) {
+            setLocalMessage({ type: 'error', text: `❌ Error: ${e.message}` });
+        } finally {
+            setLocalSearchLoading(false);
+        }
+    };
+
     const handleSearch = async () => {
         if (!email.trim()) return;
         setLoading(true);
@@ -385,6 +410,72 @@ const UploadJSON: React.FC = () => {
                             {localLoading ? '⏳ Scanning...' : '🔍 Find Local JSONs'}
                         </button>
                     </div>
+                </div>
+
+                {/* Search a specific account's local JSON */}
+                <div className="rounded-xl bg-black/20 border border-white/10 p-4 space-y-3">
+                    <label className="text-xs font-black uppercase tracking-widest text-[var(--text-muted)] block">
+                        🔎 Search account JSON locally
+                    </label>
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={localSearchEmail}
+                            onChange={e => {
+                                setLocalSearchEmail(e.target.value);
+                                setLocalSearchResult(null);
+                            }}
+                            onKeyDown={e => e.key === 'Enter' && handleLocalSearch()}
+                            placeholder="support@mydomain.com"
+                            className="flex-1 px-4 py-2.5 rounded-xl bg-black/30 border border-white/10 text-sm focus:outline-none focus:border-cyan-500 text-[var(--text-main)]"
+                        />
+                        <button
+                            onClick={handleLocalSearch}
+                            disabled={localSearchLoading || !localSearchEmail.trim()}
+                            className="px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-black text-sm transition-all disabled:opacity-50 shrink-0"
+                        >
+                            {localSearchLoading ? '⏳' : 'Search Local'}
+                        </button>
+                    </div>
+
+                    {localSearchResult && (
+                        <div className={`p-4 rounded-xl text-sm border ${localSearchResult.found && localSearchResult.isValid
+                            ? 'bg-emerald-500/10 border-emerald-500/20'
+                            : 'bg-amber-500/10 border-amber-500/20'}`}>
+                            {!localSearchResult.found ? (
+                                <div className="text-amber-400 font-bold">❌ {localSearchResult.message}</div>
+                            ) : !localSearchResult.isValid ? (
+                                <div className="text-amber-400 font-bold">⚠️ Found file <span className="font-mono">{localSearchResult.filename}</span> but it is not a valid service-account JSON.</div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="text-emerald-400 font-bold">✅ Found local JSON:</span>
+                                        <span className="font-mono text-[var(--text-main)]">{localSearchResult.filename}</span>
+                                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-white/10 text-[var(--text-muted)] uppercase">
+                                            {localSearchResult.location === 'cache' ? '🔁 cached (tmp/manage-keys)' : 'project root'}
+                                        </span>
+                                        {localSearchResult.existsInS3 ? (
+                                            <span className="text-[10px] font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md">OLD IN S3</span>
+                                        ) : (
+                                            <span className="text-[10px] font-black text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md">NOT IN S3</span>
+                                        )}
+                                    </div>
+                                    <div className="text-xs text-[var(--text-muted)]">
+                                        <span className="font-bold text-indigo-400">{localSearchResult.email}</span>
+                                        <span className="mx-1.5">·</span>
+                                        <span className="font-mono">{localSearchResult.client_email}</span>
+                                    </div>
+                                    <button
+                                        onClick={() => handleLocalPush(localSearchResult.email)}
+                                        disabled={pushingEmails.has(localSearchResult.email)}
+                                        className="px-4 py-2 rounded-xl bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600 hover:text-white text-sm font-black transition-all disabled:opacity-50"
+                                    >
+                                        {pushingEmails.has(localSearchResult.email) ? '⏳ Pushing...' : (localSearchResult.existsInS3 ? '🔄 Replace in S3' : '📤 Push to S3')}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {localMessage && (
