@@ -5344,6 +5344,132 @@ app.post('/api/s3/delete', async (req, res) => {
     }
 });
 
+// ====== Local JSON → S3 ======
+// Local SA key files are stored at the project root as `<domain>.json`
+// (e.g. `mydomain.com.json`). The admin account for a workspace is
+// conventioned as `support@<domain>`, and its S3 key is
+// `workspace-keys/<adminEmail>.json`. The helpers below find a local key
+// file and push/replace it at the correct S3 key for that exact account.
+
+function findLocalKeyPath(adminEmail) {
+    const domain = (adminEmail || '').split('@')[1] || null;
+    if (!domain) return null;
+    const candidate = path.join(__dirname, `${domain}.json`);
+    if (fs.existsSync(candidate)) return candidate;
+    // Fallback: scan root *.json files for one whose basename matches the
+    // domain (handles emails whose local part is not "support").
+    try {
+        const files = fs.readdirSync(__dirname).filter(f => f.endsWith('.json'));
+        const match = files.find(f => f.slice(0, -5).toLowerCase() === domain.toLowerCase());
+        return match ? path.join(__dirname, match) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// List local SA key JSON files found on the server (project root).
+app.get('/api/s3/local-list', async (req, res) => {
+    try {
+        const files = fs.readdirSync(__dirname)
+            .filter(f => f.endsWith('.json'))
+            .filter(f => !/^[.]/.test(f));
+        const results = [];
+        for (const file of files) {
+            const full = path.join(__dirname, file);
+            try {
+                const raw = fs.readFileSync(full, 'utf8');
+                const parsed = JSON.parse(raw);
+                if (!parsed.private_key || !parsed.client_email) continue;
+                const domain = file.slice(0, -5);
+                results.push({
+                    filename: file,
+                    domain,
+                    adminEmail: `support@${domain}`,
+                    client_email: parsed.client_email,
+                    project_id: parsed.project_id || ''
+                });
+            } catch (e) {
+                // Not a valid JSON key file — skip
+            }
+        }
+        // Attach whether each account already has a key in S3
+        const s3 = new (await import('@aws-sdk/client-s3')).S3Client({
+            region: process.env.AWS_REGION || 'eu-west-1',
+            credentials: {
+                accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
+            }
+        });
+        const { HeadObjectCommand } = await import('@aws-sdk/client-s3');
+        await Promise.all(results.map(async (r) => {
+            const s3Key = `workspace-keys/${r.adminEmail}.json`;
+            let exists = false;
+            for (const bucket of [S3_WRITE_BUCKET(), S3_READ_BUCKET()]) {
+                try {
+                    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: s3Key }));
+                    exists = true;
+                    break;
+                } catch { }
+            }
+            r.existsInS3 = exists;
+        }));
+        res.json({ success: true, files: results });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Push a local key file to S3, replacing the old JSON for that account.
+app.post('/api/s3/local-upload', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ error: 'email required' });
+
+        const localPath = findLocalKeyPath(email);
+        if (!localPath) {
+            return res.status(404).json({ error: `No local JSON key file found for ${email}` });
+        }
+
+        let raw;
+        try {
+            raw = fs.readFileSync(localPath, 'utf8');
+            const parsed = JSON.parse(raw);
+            if (!parsed.client_email || !parsed.private_key) throw new Error('missing fields');
+        } catch (e) {
+            return res.status(400).json({ error: `Local file ${path.basename(localPath)} is not a valid SA JSON key` });
+        }
+
+        const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
+        const s3 = new S3Client({
+            region: process.env.AWS_REGION || 'eu-west-1',
+            credentials: {
+                accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
+            }
+        });
+        const bucket = S3_WRITE_BUCKET();
+        const s3Key = `workspace-keys/${email}.json`;
+
+        await s3.send(new PutObjectCommand({
+            Bucket: bucket,
+            Key: s3Key,
+            Body: raw,
+            ContentType: 'application/json',
+            ACL: 'public-read'
+        }));
+
+        // Clear local cached copy (if any) so the new key is pulled from S3 next time
+        const tmpDir = path.join(__dirname, 'tmp', 'manage-keys');
+        const cachedPath = path.join(tmpDir, `${email.replace('@', '_at_').replace(/\./g, '_')}.json`);
+        if (fs.existsSync(cachedPath)) fs.unlinkSync(cachedPath);
+
+        console.log(`[LocalUpload] ✅ Pushed ${path.basename(localPath)} → s3://${bucket}/${s3Key}`);
+        res.json({ success: true, key: s3Key, filename: path.basename(localPath) });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/s3/bulk-search', async (req, res) => {
     try {
         const { emails } = req.body;

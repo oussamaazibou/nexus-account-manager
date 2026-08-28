@@ -20,6 +20,58 @@ const UploadJSON: React.FC = () => {
     const [bulkLoading, setBulkLoading] = useState(false);
     const [downloading, setDownloading] = useState(false);
 
+    // Local JSON → S3 state
+    type LocalFile = { filename: string; domain: string; adminEmail: string; client_email: string; project_id: string; existsInS3: boolean };
+    const [localFiles, setLocalFiles] = useState<LocalFile[] | null>(null);
+    const [localLoading, setLocalLoading] = useState(false);
+    const [pushingEmails, setPushingEmails] = useState<Set<string>>(new Set());
+    const [localMessage, setLocalMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+    const handleLoadLocal = async () => {
+        setLocalLoading(true);
+        setLocalMessage(null);
+        try {
+            const res = await fetch(`${API_URL}/s3/local-list`);
+            const data = await res.json();
+            if (data.success) {
+                setLocalFiles(data.files || []);
+            } else {
+                setLocalMessage({ type: 'error', text: `❌ ${data.error}` });
+            }
+        } catch (e: any) {
+            setLocalMessage({ type: 'error', text: `❌ Error: ${e.message}` });
+        } finally {
+            setLocalLoading(false);
+        }
+    };
+
+    const handleLocalPush = async (adminEmail: string) => {
+        setPushingEmails(prev => new Set(prev).add(adminEmail));
+        setLocalMessage(null);
+        try {
+            const res = await fetch(`${API_URL}/s3/local-upload`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: adminEmail })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setLocalMessage({ type: 'success', text: `✅ Replaced local JSON → S3 for ${adminEmail} (${data.filename})` });
+                handleLoadLocal();
+            } else {
+                setLocalMessage({ type: 'error', text: `❌ ${data.error}` });
+            }
+        } catch (e: any) {
+            setLocalMessage({ type: 'error', text: `❌ Error: ${e.message}` });
+        } finally {
+            setPushingEmails(prev => {
+                const next = new Set(prev);
+                next.delete(adminEmail);
+                return next;
+            });
+        }
+    };
+
     const handleSearch = async () => {
         if (!email.trim()) return;
         setLoading(true);
@@ -312,6 +364,76 @@ const UploadJSON: React.FC = () => {
                     )}
                 </div>
 
+            </div>
+
+            {/* Local JSON → S3 Panel */}
+            <div className="glass-card p-6 space-y-5">
+                <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                    <div>
+                        <h3 className="font-black">2b. Find Local JSON → Push &amp; Replace in S3</h3>
+                        <p className="text-xs text-[var(--text-muted)] mt-1">Scan the server for locally saved service-account JSONs (<code className="text-emerald-300">&lt;domain&gt;.json</code>) and upload each one, overwriting the old key for that account in S3.</p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                        <div className="w-10 h-10 rounded-xl bg-cyan-600/20 text-cyan-400 flex items-center justify-center">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                        </div>
+                        <button
+                            onClick={handleLoadLocal}
+                            disabled={localLoading}
+                            className="px-4 py-2 rounded-xl bg-cyan-600/15 text-cyan-400 hover:bg-cyan-600 hover:text-white text-sm font-bold transition-all disabled:opacity-50"
+                        >
+                            {localLoading ? '⏳ Scanning...' : '🔍 Find Local JSONs'}
+                        </button>
+                    </div>
+                </div>
+
+                {localMessage && (
+                    <div className={`p-4 rounded-xl text-sm font-bold border ${localMessage.type === 'success' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
+                        {localMessage.text}
+                    </div>
+                )}
+
+                {localFiles === null ? (
+                    <div className="flex flex-col items-center justify-center py-10 text-[var(--text-muted)] text-sm gap-3 rounded-xl bg-black/20 border border-white/5">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M13 2v7h7"/></svg>
+                        <span>Click "Find Local JSONs" to scan the server for local keys</span>
+                    </div>
+                ) : localFiles.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-black/20 border border-white/5 text-[var(--text-muted)] text-sm text-center">
+                        No local service-account JSON keys found on the server.
+                    </div>
+                ) : (
+                    <div className="rounded-xl bg-black/30 border border-white/10 overflow-hidden" style={{ maxHeight: 380, overflowY: 'auto' }}>
+                        <div className="divide-y divide-white/5">
+                            {localFiles.map(f => (
+                                <div key={f.filename} className="flex items-center justify-between gap-3 px-4 py-3">
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-mono text-[var(--text-main)] text-sm truncate">{f.filename}</span>
+                                            {f.existsInS3 ? (
+                                                <span className="text-[10px] font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md shrink-0">OLD IN S3</span>
+                                            ) : (
+                                                <span className="text-[10px] font-black text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md shrink-0">NOT IN S3</span>
+                                            )}
+                                        </div>
+                                        <div className="text-xs text-[var(--text-muted)] mt-0.5">
+                                            <span className="font-bold text-indigo-400">{f.adminEmail}</span>
+                                            <span className="mx-1.5">·</span>
+                                            <span className="font-mono truncate">{f.client_email}</span>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => handleLocalPush(f.adminEmail)}
+                                        disabled={pushingEmails.has(f.adminEmail)}
+                                        className="px-4 py-2 rounded-xl bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600 hover:text-white text-sm font-black transition-all disabled:opacity-50 shrink-0"
+                                    >
+                                        {pushingEmails.has(f.adminEmail) ? '⏳ Pushing...' : (f.existsInS3 ? '🔄 Replace in S3' : '📤 Push to S3')}
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* JSON Viewer */}
