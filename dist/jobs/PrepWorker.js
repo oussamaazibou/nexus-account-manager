@@ -298,6 +298,20 @@ export class PrepWorker {
         await gcloud.createKey(projectId, saEmail, keyPath);
         // 6. Upload Key
         await this.s3.uploadFile(`workspace-keys/${userEmail}.json`, keyPath);
+        // Invalidate the locally-cached SA key for this account so the brand-new
+        // key uploaded to S3 above is used on the next fetch instead of a stale
+        // copy of the old key.
+        try {
+            const safeEmail = userEmail.replace('@', '_at_').replace(/\./g, '_');
+            const cachedKeyPath = path.join(process.cwd(), 'tmp', 'manage-keys', `${safeEmail}.json`);
+            if (fs.existsSync(cachedKeyPath)) {
+                fs.unlinkSync(cachedKeyPath);
+                Logger.info(`Replaced locally-cached SA key for ${userEmail} - new JSON will be used`);
+            }
+        }
+        catch (cacheErr) {
+            Logger.warn(`Could not clear cached SA key for ${userEmail}: ${cacheErr.message}`);
+        }
         // --- BROWSER AUTOMATION (DWD + Authenticator + 2SV) ---
         if (userPassword) {
             Logger.info("Starting Browser Automation steps...");
