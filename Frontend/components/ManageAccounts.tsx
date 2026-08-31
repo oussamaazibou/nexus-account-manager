@@ -1119,7 +1119,7 @@ const ManageAccounts: React.FC = () => {
     ];
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-700">
+        <div className="account-manager-page animate-in fade-in duration-700">
 
             {/* Verify domain full-screen overlay */}
             {verifyModal && (
@@ -1176,16 +1176,24 @@ const ManageAccounts: React.FC = () => {
             )}
 
             {/* Header */}
-            <div className="space-y-2">
-                <h2 className="text-3xl md:text-4xl font-black tracking-tightest uppercase">Account Manager</h2>
-                <p className="text-[var(--text-muted)] text-sm font-medium">Manage Google Workspace via Admin SDK API</p>
+            <div className="am-hero">
+                <div className="am-hero-copy">
+                    <span className="am-kicker">Workspace directory</span>
+                    <h2>Account Manager</h2>
+                    <p>Browse workspaces, inspect users and domains, then run focused or bulk operations.</p>
+                </div>
+                <div className="am-summary">
+                    <div><span>Workspaces</span><strong>{accounts.length}</strong></div>
+                    <div><span>Collection</span><strong>{selectedCollection}</strong></div>
+                    <div className={selectedAccount ? 'is-ready' : ''}><span>Current</span><strong>{selectedAccount?.domain || 'None'}</strong></div>
+                </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="am-layout">
 
                 {/* LEFT: Account Selector */}
-                <div className="lg:col-span-1 space-y-4">
-                    <div className="glass-card p-5 space-y-4">
+                <div className="am-workspace-browser">
+                    <div className="glass-card am-browser-card">
                         <div className="space-y-3 pb-4 border-b border-white/10">
                             <label className="text-xs font-black uppercase tracking-widest text-[var(--text-muted)] block">Filter by Collection</label>
                             <div className="relative">
@@ -1343,15 +1351,15 @@ const ManageAccounts: React.FC = () => {
                 </div>
 
                 {/* RIGHT: Actions Panel */}
-                <div className="lg:col-span-2 space-y-4">
-                    <div className="glass-card p-0 overflow-hidden">
+                <div className="am-action-zone">
+                    <div className="glass-card am-action-card">
                         {/* Tabs — always visible */}
-                        <div className="flex border-b border-white/10 overflow-x-auto">
+                        <div className="am-tabs">
                             {tabs.map(tab => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`flex-shrink-0 flex-1 py-4 text-xs font-black uppercase tracking-widest transition-all ${activeTab === tab.id
+                                    className={`am-tab ${activeTab === tab.id
                                         ? 'text-indigo-400 border-b-2 border-indigo-500 bg-indigo-600/10'
                                         : 'text-[var(--text-muted)] hover:text-[var(--text-main)]'
                                         }`}
@@ -1361,7 +1369,7 @@ const ManageAccounts: React.FC = () => {
                             ))}
                         </div>
 
-                        <div className="p-6">
+                        <div className="am-panel-body">
                             {/* No account selected — placeholder for non-bulk tabs */}
                             {!selectedAccount && activeTab !== 'bulk-info' && activeTab !== 'bulk-ops' && (
                                 <div className="py-12 text-center text-[var(--text-muted)]">
