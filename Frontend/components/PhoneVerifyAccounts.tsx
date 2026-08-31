@@ -431,7 +431,7 @@ const PhoneVerifyAccounts: React.FC = () => {
 
     // ── Render ─────────────────────────────────────────────────────────────────
     return (
-        <div className="space-y-6 animate-in fade-in duration-500 pb-28">
+        <div className="workspace-page space-y-6 animate-in fade-in duration-500 pb-28">
 
             {/* Header */}
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
