@@ -656,7 +656,7 @@ const DynuDomains: React.FC = () => {
     const bulkOk = bulkResults.filter(r => r.success).length;
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-700 pb-24">
+        <div className="workspace-page space-y-8 animate-in fade-in duration-700 pb-24">
 
             {/* Header */}
             <div className="space-y-2">
