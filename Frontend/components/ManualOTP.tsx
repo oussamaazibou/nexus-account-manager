@@ -34,7 +34,7 @@ const ManualOTP: React.FC = () => {
   };
 
   return (
-    <div className="glass" style={{ padding: '24px', maxWidth: '600px', margin: '0 auto', borderRadius: '12px' }}>
+    <div className="workspace-page glass standalone-tool-page" style={{ padding: '24px', maxWidth: '760px', margin: '0 auto', borderRadius: '12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
         <div style={{ width: 40, height: 40, background: 'rgba(59,130,246,0.1)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--blue)' }}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
