@@ -176,7 +176,7 @@ const AppPasswords: React.FC = () => {
     const pendingCount = accounts.filter(a => a.status === 'pending').length;
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-500 pb-24">
+        <div className="workspace-page space-y-6 animate-in fade-in duration-500 pb-24">
             {/* Header */}
             <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
                 <div>
