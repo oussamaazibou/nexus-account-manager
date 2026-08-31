@@ -127,7 +127,7 @@ const AppUsers: React.FC = () => {
     };
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-700">
+        <div className="workspace-page space-y-8 animate-in fade-in duration-700">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-6">
                 <div>
                     <h2 className="text-3xl font-black tracking-tightest uppercase">Application Users</h2>
