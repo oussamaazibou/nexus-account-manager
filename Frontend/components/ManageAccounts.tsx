@@ -1381,12 +1381,12 @@ const ManageAccounts: React.FC = () => {
                                 {/* TAB: BULK INFO */}
                                 {activeTab === 'bulk-info' && (
                                     <div className="space-y-6">
-                                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                                        <div className="am-bulk-header">
                                             <div>
                                                 <h3 className="font-black text-xl">Bulk Workspace Info</h3>
                                                 <p className="text-sm text-[var(--text-muted)]">Overview for Collection: <span className="text-indigo-400 font-bold">{selectedCollection}</span></p>
                                             </div>
-                                            <div className="flex items-center gap-2">
+                                            <div className="am-bulk-toolbar">
                                                 <button onClick={handleDownloadBulkUsers} disabled={!bulkInfoResults || Object.keys(bulkInfoResults).length === 0} className="px-4 py-2 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500 hover:text-white text-sm font-bold transition-all shrink-0">
                                                     💾 Download Users
                                                 </button>
