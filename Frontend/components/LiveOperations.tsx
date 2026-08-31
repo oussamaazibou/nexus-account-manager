@@ -122,7 +122,7 @@ const LiveOperations: React.FC<LiveOperationsProps> = ({ accounts, onVerify }) =
 
   return (
     <div className="workspace-page live-operations-page">
-      {/* Header */
+      {/* Header */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:12 }}>
         <div>
           <div style={{ fontSize:20, fontWeight:700 }}>Live Monitor</div>
