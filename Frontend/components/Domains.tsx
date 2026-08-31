@@ -695,7 +695,7 @@ const Domains: React.FC = () => {
     };
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-700">
+        <div className="workspace-page space-y-6 animate-in fade-in duration-700">
             {txtDomain && <TxtPanel domain={txtDomain} onClose={() => setTxtDomain(null)} />}
             {showBulkAdd && <BulkAddPanel onClose={() => setShowBulkAdd(false)} onDone={() => { fetchDomains(); }} />}
 
