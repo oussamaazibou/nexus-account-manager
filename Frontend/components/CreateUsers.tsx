@@ -298,7 +298,7 @@ const CreateUsers: React.FC = () => {
     const allSuspended = workspaceUsers.flatMap(w => w.suspended.map(e => `${e}:${w.adminPassword}`));
 
     return (
-        <div className="space-y-6 max-w-6xl mx-auto">
+        <div className="workspace-page space-y-6 max-w-6xl mx-auto">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
