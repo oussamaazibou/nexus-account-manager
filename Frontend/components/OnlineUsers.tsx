@@ -54,7 +54,7 @@ const OnlineUsers: React.FC = () => {
   const offlineCount = sessions.filter(s => !s.online).length;
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-500">
+    <div className="workspace-page space-y-10 animate-in fade-in duration-500">
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
         <div>
