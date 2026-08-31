@@ -160,7 +160,7 @@ const ArchiveAccounts: React.FC = () => {
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-700 relative pb-24">
+    <div className="workspace-page space-y-8 animate-in fade-in duration-700 relative pb-24">
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div className="shrink-0">
