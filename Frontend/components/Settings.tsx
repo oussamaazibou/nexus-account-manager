@@ -65,7 +65,7 @@ const Settings: React.FC<SettingsProps> = ({ settings: globalSettings, setSettin
   };
 
   return (
-    <div className="space-y-12 animate-in fade-in duration-700 pb-24">
+    <div className="workspace-page space-y-12 animate-in fade-in duration-700 pb-24">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-8">
         <div className="space-y-2">
           <h2 className="text-4xl font-black tracking-tightest uppercase">System Config</h2>
