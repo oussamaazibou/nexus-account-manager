@@ -35,14 +35,27 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="login-wrap">
+    <div className="login-wrap login-redesign">
       {/* Subtle background glow */}
       <div style={{
         position: 'fixed', inset: 0, zIndex: 0,
         background: 'radial-gradient(ellipse 60% 50% at 50% 0%, rgba(59,130,246,0.08) 0%, transparent 70%)'
       }} />
 
-      <div className="login-card" style={{ boxShadow: '0 24px 64px rgba(0,0,0,0.5)' }}>
+      <div className="login-showcase">
+        <div className="login-showcase-inner">
+          <div className="showcase-badge"><span /> Secure operations workspace</div>
+          <h1>Control every account workflow from one place.</h1>
+          <p>Launch, monitor, and manage your workspace operations with a focused command center built for speed.</p>
+          <div className="showcase-metrics">
+            <div><strong>Live</strong><span>Job telemetry</span></div>
+            <div><strong>24/7</strong><span>Queue monitoring</span></div>
+            <div><strong>Secure</strong><span>Role access</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="login-card">
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{
@@ -57,12 +70,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
           </div>
-          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.5px', color: 'var(--text)' }}>
-            Nexus
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4 }}>
-            Workspace Management Platform
-          </div>
+          <div className="login-welcome">Welcome back</div>
+          <div className="login-copy">Sign in to continue to Nexus</div>
         </div>
 
         {/* Error */}
