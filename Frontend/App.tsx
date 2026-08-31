@@ -359,7 +359,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+    <div className="app-shell">
 
       {/* ── Sidebar ──────────────────────────────────────────────────────────── */}
       <aside className={`sidebar ${mini ? 'mini' : ''}`}>
@@ -462,9 +462,10 @@ const App: React.FC = () => {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
         {/* Topbar */}
-        <header style={{ height: 54, background: 'var(--bg2)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', padding: '0 24px', gap: 12, flexShrink: 0 }}>
+        <header className="app-topbar">
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{viewLabels[activeView]}</div>
+            <div className="topbar-eyebrow">Workspace</div>
+            <div className="topbar-title">{viewLabels[activeView]}</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green)', display: 'inline-block' }} className="pulse" />
@@ -475,7 +476,7 @@ const App: React.FC = () => {
         </header>
 
         {/* Content */}
-        <main style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
+        <main className="app-content">
           {activeView==='DASHBOARD'       && hasPermission('DASHBOARD')       && <Dashboard onAdd={addAccountsFromDomains} onStop={handleStopCreation} settings={settings} setSettings={updateSettings as any} stats={dashboardStats} username={currentUser?.username} />}
           {activeView==='QUEUE'           && hasPermission('QUEUE')           && <AccountQueue accounts={accounts} onVerify={handleVerify} onCheckLogin={handleCheckLogin} onBulkVerify={handleBulkVerify} onPhoneVerify={handlePhoneVerify} onRemove={removeAccount} settings={settings} setSettings={setSettings} />}
           {activeView==='OPERATIONS'      && hasPermission('OPERATIONS')      && <LiveOperations accounts={accounts} onVerify={handleVerify} />}

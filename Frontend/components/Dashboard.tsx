@@ -34,16 +34,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
   ];
 
   return (
-    <div>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 20, fontWeight: 700 }}>Workspace Creation</div>
-        <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>Paste domains or email:password accounts to start processing</div>
+    <div className="dashboard-view">
+      <div className="page-intro">
+        <div>
+          <div className="page-kicker">Operations center</div>
+          <div className="page-title">Workspace Creation</div>
+          <div className="page-description">Add domains or accounts, configure the run, and track every job from one place.</div>
+        </div>
+        <div className={`system-chip ${isRunning ? 'is-running' : ''}`}>
+          <span className="system-chip-dot" />
+          {isRunning ? `${threads} threads running` : 'System ready'}
+        </div>
       </div>
 
       {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+      <div className="stats-grid">
         {statCards.map(s => (
-          <div key={s.label} className="stat-card" style={{ borderTop: `2px solid ${s.color}` }}>
+          <div key={s.label} className="stat-card" style={{ '--stat-color': s.color } as React.CSSProperties}>
             <div className="stat-label">{s.label}</div>
             <div className="stat-val" style={{ color: s.color }}>{s.val.toLocaleString()}</div>
             <div className="stat-sub">Jobs</div>
@@ -51,10 +58,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16, alignItems: 'start' }}>
+      <div className="workspace-grid">
 
         {/* Input card */}
-        <div className="glass" style={{ padding: 20 }}>
+        <div className="glass workspace-composer">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               Input Stream
@@ -73,7 +80,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
             placeholder={"user@example.com:password123\ndomain.com\nuniversity.edu"}
           />
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div className="composer-actions">
             <button
               className="btn btn-primary"
               onClick={() => { onAdd(inputText, concurrency); setInputText(''); }}
@@ -111,7 +118,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
               Import File
             </label>
 
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="thread-control">
               <span style={{ fontSize: 12, color: 'var(--text2)' }}>Threads:</span>
               <input
                 type="number" min={1} max={50} value={concurrency}
@@ -124,7 +131,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
         </div>
 
         {/* Config panel */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="config-stack">
 
           {/* Toggles */}
           <div className="glass" style={{ padding: 16 }}>
