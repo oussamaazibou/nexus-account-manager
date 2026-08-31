@@ -27,19 +27,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
   const isRunning = threads > 0 || (stats?.active||0) > 0;
 
   const statCards = [
-    { label: 'Active',    val: stats?.active||0,    color: '#3b82f6' },
-    { label: 'Completed', val: stats?.completed||0, color: '#10b981' },
-    { label: 'Failed',    val: stats?.failed||0,    color: '#ef4444' },
-    { label: 'Waiting',   val: stats?.waiting||0,   color: '#f59e0b' },
+    { label: 'Active jobs', val: stats?.active||0, color: '#8b5cf6', tone: 'violet', icon: <><path d="M4 14h4l2-8 4 12 2-4h4"/></> },
+    { label: 'Completed', val: stats?.completed||0, color: '#22c55e', tone: 'green', icon: <><path d="m7 12 3 3 7-7"/><circle cx="12" cy="12" r="9"/></> },
+    { label: 'Failed', val: stats?.failed||0, color: '#f43f5e', tone: 'rose', icon: <><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></> },
+    { label: 'In queue', val: stats?.waiting||0, color: '#f59e0b', tone: 'amber', icon: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></> },
   ];
+  const completion = total > 0 ? Math.round(((stats?.completed||0) / total) * 100) : 0;
 
   return (
     <div className="dashboard-view">
       <div className="page-intro">
         <div>
-          <div className="page-kicker">Operations center</div>
-          <div className="page-title">Workspace Creation</div>
-          <div className="page-description">Add domains or accounts, configure the run, and track every job from one place.</div>
+          <div className="page-kicker">Command center</div>
+          <div className="page-title">Good to see you, {username || 'operator'}.</div>
+          <div className="page-description">Launch a new workspace run and monitor its health in real time.</div>
         </div>
         <div className={`system-chip ${isRunning ? 'is-running' : ''}`}>
           <span className="system-chip-dot" />
@@ -50,10 +51,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
       {/* Stats row */}
       <div className="stats-grid">
         {statCards.map(s => (
-          <div key={s.label} className="stat-card" style={{ '--stat-color': s.color } as React.CSSProperties}>
+          <div key={s.label} className={`stat-card stat-${s.tone}`} style={{ '--stat-color': s.color } as React.CSSProperties}>
+            <div className="stat-card-head">
+              <div className="stat-icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{s.icon}</svg></div>
+              <span className="stat-period">Live</span>
+            </div>
+            <div className="stat-val">{s.val.toLocaleString()}</div>
             <div className="stat-label">{s.label}</div>
-            <div className="stat-val" style={{ color: s.color }}>{s.val.toLocaleString()}</div>
-            <div className="stat-sub">Jobs</div>
           </div>
         ))}
       </div>
@@ -62,21 +66,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
 
         {/* Input card */}
         <div className="glass workspace-composer">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Input Stream
+          <div className="panel-heading">
+            <div className="panel-title-wrap">
+              <span className="step-number">01</span>
+              <div>
+                <div className="panel-title">Add your input</div>
+                <div className="panel-subtitle">Paste accounts or domains, one per line</div>
+              </div>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text2)' }}>
-              Format: <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text3)' }}>email:pass</span> or <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--text3)' }}>domain.com</span>
-            </div>
+            <div className="format-pills"><span>email:pass</span><span>domain.com</span></div>
           </div>
 
           <textarea
             value={inputText}
             onChange={e => setInputText(e.target.value)}
             className="inp"
-            rows={12}
-            style={{ resize: 'vertical', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, lineHeight: 1.6, borderRadius: 8 }}
+            rows={14}
+            style={{ resize: 'vertical', fontFamily: 'JetBrains Mono, monospace', fontSize: 12, lineHeight: 1.7 }}
             placeholder={"user@example.com:password123\ndomain.com\nuniversity.edu"}
           />
 
@@ -87,7 +93,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
               disabled={!inputText.trim()}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              Start Processing
+              Launch run
             </button>
 
             <button
@@ -115,7 +121,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
                 }}
               />
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Import File
+              Import list
             </label>
 
             <div className="thread-control">
@@ -134,8 +140,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
         <div className="config-stack">
 
           {/* Toggles */}
-          <div className="glass" style={{ padding: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Configuration</div>
+          <div className="glass config-card">
+            <div className="panel-heading compact">
+              <div className="panel-title-wrap"><span className="step-number">02</span><div><div className="panel-title">Run setup</div><div className="panel-subtitle">Processing preferences</div></div></div>
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <Toggle label="Proxy Cluster" sub="Route through proxies" active={settings.proxiesEnabled} onClick={() => setSettings((s: AppSettings) => ({ ...s, proxiesEnabled: !s.proxiesEnabled }))} />
               <Toggle label="Headless Mode" sub="Browser runs silently" active={settings.headlessMode}  onClick={() => setSettings((s: AppSettings) => ({ ...s, headlessMode: !s.headlessMode }))} />
@@ -143,10 +151,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
           </div>
 
           {/* Telemetry */}
-          <div className="glass" style={{ padding: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Threads</div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: threads > 0 ? 'var(--blue)' : 'var(--text2)', fontFamily: 'JetBrains Mono, monospace' }}>{threads}</div>
+          <div className="glass health-card">
+            <div className="health-card-top">
+              <div><div className="panel-title">Run health</div><div className="panel-subtitle">Live workload telemetry</div></div>
+              <div className="thread-orb"><strong>{threads}</strong><span>threads</span></div>
             </div>
 
             {stats?.workspace ? (
@@ -165,12 +173,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onAdd, onStop, settings, setSetti
               </div>
             ) : (
               <>
-                <div style={{ background: 'var(--bg3)', borderRadius: 6, height: 6, overflow: 'hidden', marginBottom: 10 }}>
-                  <div style={{ height: '100%', width: total > 0 ? `${Math.round(((stats?.active||0)/total)*100)}%` : '0%', background: 'var(--blue)', borderRadius: 6, transition: 'width 0.8s ease' }} />
+                <div className="progress-label"><span>Overall completion</span><strong>{completion}%</strong></div>
+                <div className="health-progress">
+                  <div style={{ width: `${completion}%` }} />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text2)' }}>
-                  <span>Total: {total}</span>
-                  <span>{total > 0 ? Math.round(((stats?.active||0)/total)*100) : 0}% active</span>
+                <div className="health-meta">
+                  <span><b>{total}</b> total jobs</span>
+                  <span><b>{stats?.active||0}</b> active</span>
                 </div>
               </>
             )}
