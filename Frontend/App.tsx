@@ -364,13 +364,13 @@ const App: React.FC = () => {
       {/* ── Sidebar ──────────────────────────────────────────────────────────── */}
       <aside className={`sidebar ${mini ? 'mini' : ''}`}>
         {/* Logo */}
-        <div style={{ padding: mini ? '20px 0' : '20px 16px', display: 'flex', alignItems: 'center', gap: 10, justifyContent: mini ? 'center' : undefined, borderBottom: '1px solid var(--border)', marginBottom: 8 }}>
-          <div style={{ width: 34, height: 34, background: 'var(--blue)', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0, boxShadow: '0 4px 12px rgba(59,130,246,0.3)' }}>
+        <div className="brand-block" style={{ justifyContent: mini ? 'center' : undefined }}>
+          <div className="brand-mark">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           {!mini && <div>
-            <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: '-0.3px' }}>Nexus</div>
-            <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 1 }}>Workspace Manager</div>
+            <div className="brand-name">Nexus</div>
+            <div className="brand-caption">Operations suite</div>
           </div>}
         </div>
 
@@ -463,15 +463,22 @@ const App: React.FC = () => {
 
         {/* Topbar */}
         <header className="app-topbar">
-          <div style={{ flex: 1 }}>
+          <div className="topbar-heading">
             <div className="topbar-eyebrow">Workspace</div>
             <div className="topbar-title">{viewLabels[activeView]}</div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green)', display: 'inline-block' }} className="pulse" />
-            <span style={{ fontSize: 12, color: 'var(--text2)' }}>
-              {currentUser?.username} · {currentUser?.role}
-            </span>
+          <div className="topbar-search" role="search">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <span>Search workspace</span>
+            <kbd>⌘ K</kbd>
+          </div>
+          <div className="topbar-account">
+            <span className="topbar-status pulse" />
+            <div className="topbar-avatar">{currentUser?.username?.charAt(0).toUpperCase()}</div>
+            <div className="topbar-usercopy">
+              <strong>{currentUser?.username}</strong>
+              <span>{currentUser?.role}</span>
+            </div>
           </div>
         </header>
 
