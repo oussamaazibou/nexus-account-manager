@@ -233,7 +233,7 @@ const AccountQueue: React.FC<AccountQueueProps> = ({
   };
 
   return (
-    <div className="space-y-8 md:space-y-12 animate-in fade-in duration-700 relative pb-24">
+    <div className="workspace-page space-y-8 md:space-y-12 animate-in fade-in duration-700 relative pb-24">
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
         <div className="space-y-2 shrink-0">
           <h2 className="text-3xl md:text-4xl font-black tracking-tightest uppercase">List Accounts</h2>
