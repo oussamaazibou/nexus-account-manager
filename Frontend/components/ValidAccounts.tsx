@@ -832,9 +832,9 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
 
       {/* Floating Action Bar for Selections */}
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-8 left-1/2 lg:left-[calc(50%+160px)] -translate-x-1/2 z-50 animate-in slide-in-from-bottom-10 w-max max-w-[95vw] lg:max-w-[calc(100vw-350px)]">
-          <div className="bg-[#0f172a] rounded-2xl px-6 py-4 shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-wrap items-center justify-center gap-4 border border-white/10 backdrop-blur-xl">
-            <span className="text-sm font-black text-white whitespace-nowrap">{selectedIds.size} SELECTED</span>
+        <div className="results-selection-wrap fixed bottom-8 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-10">
+          <div className="results-selection-bar bg-[#0f172a] rounded-2xl px-6 py-4 flex flex-wrap items-center justify-center gap-4 border border-white/10 backdrop-blur-xl">
+            <span className="results-selection-count text-sm font-black text-white whitespace-nowrap">{selectedIds.size} SELECTED</span>
             <div className="h-6 w-[1px] bg-white/20" />
             <input
               type="text"
