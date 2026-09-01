@@ -1025,3 +1025,89 @@ tr:hover td { background:#faf9f6; }
   .results-selection-bar > .h-6 { display:none; }
   .results-selection-count { grid-column:1 / -1; text-align:center; }
 }
+
+
+/* Result Accounts: full-width table with always-visible operational tools */
+.result-accounts-page {
+  width: 100%;
+  max-width: none !important;
+}
+
+.result-accounts-page .results-table-card {
+  width: 100%;
+}
+
+.result-accounts-page .results-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+}
+
+.result-accounts-page .results-accounts-table {
+  width: 100%;
+  min-width: 1180px;
+}
+
+.result-accounts-page .results-accounts-table th,
+.result-accounts-page .results-accounts-table td {
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+}
+
+.result-accounts-page .results-accounts-table th:nth-child(1),
+.result-accounts-page .results-accounts-table td:nth-child(1) { width: 52px; }
+.result-accounts-page .results-accounts-table th:nth-child(2),
+.result-accounts-page .results-accounts-table td:nth-child(2) { width: 28%; }
+.result-accounts-page .results-accounts-table th:nth-child(3),
+.result-accounts-page .results-accounts-table td:nth-child(3) { width: 13%; }
+.result-accounts-page .results-accounts-table th:nth-child(4),
+.result-accounts-page .results-accounts-table td:nth-child(4) { width: 9%; }
+.result-accounts-page .results-accounts-table th:nth-child(5),
+.result-accounts-page .results-accounts-table td:nth-child(5) { width: 8%; }
+.result-accounts-page .results-accounts-table th:nth-child(6),
+.result-accounts-page .results-accounts-table td:nth-child(6) { width: 9%; }
+.result-accounts-page .results-accounts-table th:nth-child(7),
+.result-accounts-page .results-accounts-table td:nth-child(7) { width: 8%; }
+.result-accounts-page .results-accounts-table th:nth-child(8),
+.result-accounts-page .results-accounts-table td:nth-child(8) { width: 8%; }
+
+.result-accounts-page .results-actions-cell {
+  position: sticky;
+  right: 0;
+  z-index: 4;
+  width: 310px;
+  min-width: 310px;
+  background: var(--card-bg, #f8f7f3);
+  box-shadow: -14px 0 24px -20px rgba(15, 23, 42, .55);
+}
+
+.result-accounts-page thead .results-actions-cell {
+  z-index: 7;
+  background: var(--theme-surface, #f4f3ef);
+}
+
+.result-accounts-page tbody tr:hover .results-actions-cell {
+  background: color-mix(in srgb, var(--card-bg, #f8f7f3) 94%, #4f46e5 6%);
+}
+
+.result-accounts-page tbody tr.bg-indigo-600\/10 .results-actions-cell {
+  background: color-mix(in srgb, var(--card-bg, #f8f7f3) 88%, #6366f1 12%);
+}
+
+.result-accounts-page .results-actions-list {
+  min-width: 286px;
+  opacity: 1 !important;
+  white-space: nowrap;
+}
+
+.result-accounts-page .results-actions-list button {
+  padding: 8px !important;
+}
+
+@media (max-width: 1250px) {
+  .result-accounts-page .results-accounts-table { min-width: 1080px; }
+  .result-accounts-page .results-actions-cell { width: 282px; min-width: 282px; }
+  .result-accounts-page .results-actions-list { min-width: 260px; }
+  .result-accounts-page .results-accounts-table th:nth-child(3),
+  .result-accounts-page .results-accounts-table td:nth-child(3) { display: none; }
+}
