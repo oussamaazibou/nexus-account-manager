@@ -715,9 +715,9 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
   };
 
   return (
-    <div className="workspace-page space-y-8 md:space-y-12 animate-in fade-in duration-700 relative pb-24">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-        <div className="shrink-0">
+    <div className="workspace-page result-accounts-page space-y-8 md:space-y-12 animate-in fade-in duration-700 relative pb-24">
+      <div className="results-header flex flex-col justify-between gap-6">
+        <div className="results-heading shrink-0">
           <h2 className="text-2xl sm:text-3xl font-black tracking-tightest uppercase flex items-center gap-3">
             <span className="text-emerald-500"><Icons.Database /></span>
             Result Accounts
@@ -725,7 +725,7 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
           <p className="text-[var(--text-muted)] mt-2 text-sm font-medium">Managing {validAccounts.length} verified administrative records.</p>
         </div>
 
-        <div className="flex flex-row items-center gap-3 overflow-x-auto pb-2 no-scrollbar max-w-full">
+        <div className="results-toolbar flex flex-row items-center gap-3 pb-2 no-scrollbar max-w-full">
           {/* Add Manual Account */}
           <button
             onClick={() => setShowAddModal(true)}
