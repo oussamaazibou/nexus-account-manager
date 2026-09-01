@@ -940,3 +940,50 @@ tr:hover td { background:#faf9f6; }
   .dynu-workbench,.dynu-command-rail { grid-template-columns:1fr!important; }
   .dynu-results-pane > .glass-card { min-height:420px; }
 }
+
+
+/* ── Result Accounts — two-level responsive command header ──────────────── */
+.result-accounts-page > .results-header {
+  min-height:0!important; padding:26px 28px 22px!important; display:flex!important;
+  flex-direction:column!important; align-items:stretch!important; justify-content:flex-start!important;
+  gap:20px!important; overflow:visible!important; background:#111827!important;
+}
+.result-accounts-page > .results-header::after {
+  right:38px!important; top:-110px!important; width:230px!important; height:230px!important;
+  border-width:36px!important; opacity:.95; z-index:0;
+}
+.results-heading { width:100%; min-width:0; }
+.results-heading h2 { font-size:clamp(27px,3vw,42px)!important; text-transform:none!important; }
+.results-heading p { margin-top:6px!important; }
+.results-toolbar {
+  width:100%; padding:11px!important; display:flex!important; flex-wrap:wrap!important;
+  align-items:center!important; gap:8px!important; overflow:visible!important;
+  position:relative; z-index:2; background:rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.12); border-radius:10px;
+}
+.results-toolbar > * { flex-shrink:0!important; min-height:42px; margin:0!important; }
+.results-toolbar > .glass-card {
+  color:#111827!important; background:#fff!important; border:1px solid #dedcd5!important;
+  border-radius:7px!important; box-shadow:none!important;
+}
+.results-toolbar > button:first-child { color:#2447bc!important; background:#ffda58!important; border-color:#ffda58!important; }
+.results-toolbar > label { color:#168765!important; }
+.results-toolbar > div:nth-of-type(1) { flex:1 1 240px!important; min-width:210px!important; }
+.results-toolbar > div:nth-of-type(2) { min-width:104px!important; }
+.results-toolbar > div:nth-of-type(3),
+.results-toolbar > div:nth-of-type(4),
+.results-toolbar > div:nth-of-type(5) { flex:1 1 170px!important; min-width:160px!important; }
+.results-toolbar input,.results-toolbar select {
+  min-width:0!important; color:#111827!important; background:transparent!important; border:0!important;
+}
+.results-toolbar select { padding-right:18px; }
+.results-toolbar option { color:#111827!important; background:#fff!important; }
+@media (max-width:800px) {
+  .result-accounts-page > .results-header { padding:22px 18px!important; }
+  .results-toolbar { display:grid!important; grid-template-columns:1fr 1fr; }
+  .results-toolbar > * { width:100%!important; justify-content:center; }
+  .results-toolbar > div { min-width:0!important; }
+}
+@media (max-width:500px) {
+  .results-toolbar { grid-template-columns:1fr; }
+}
