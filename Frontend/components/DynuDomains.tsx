@@ -656,10 +656,10 @@ const DynuDomains: React.FC = () => {
     const bulkOk = bulkResults.filter(r => r.success).length;
 
     return (
-        <div className="workspace-page space-y-8 animate-in fade-in duration-700 pb-24">
+        <div className="workspace-page dynu-page space-y-8 animate-in fade-in duration-700 pb-24">
 
             {/* Header */}
-            <div className="space-y-2">
+            <div className="dynu-hero space-y-2">
                 <h2 className="text-3xl md:text-4xl font-black tracking-tightest uppercase">Dynu Domains</h2>
                 <p className="text-[var(--text-muted)] text-sm font-medium">
                     Generate unique subdomains and verify them via Cloudflare or Dynu DNS
@@ -667,7 +667,7 @@ const DynuDomains: React.FC = () => {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="dynu-metrics grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="glass-card p-5">
                     <div className="text-2xl font-black text-cyan-400">{baseCount}</div>
                     <div className="text-[10px] uppercase tracking-widest text-[var(--text-muted)] font-black mt-1">Base Domains</div>
@@ -686,10 +686,10 @@ const DynuDomains: React.FC = () => {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="dynu-workbench grid grid-cols-1 lg:grid-cols-3 gap-6">
 
                 {/* LEFT: Account + base domains + bulk */}
-                <div className="lg:col-span-1 space-y-4">
+                <div className="dynu-command-rail lg:col-span-1 space-y-4">
                     <div className="glass-card p-5 space-y-4">
                         <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Target Workspace</h3>
                         <div className="relative">
@@ -946,7 +946,7 @@ const DynuDomains: React.FC = () => {
                 </div>
 
                 {/* RIGHT: provisioned subdomains */}
-                <div className="lg:col-span-2 space-y-4">
+                <div className="dynu-results-pane lg:col-span-2 space-y-4">
                     <div className="glass-card p-5 space-y-4">
                         <div className="flex items-center justify-between">
                             <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Provisioned Subdomains</h3>
@@ -1013,7 +1013,7 @@ const DynuDomains: React.FC = () => {
             </div>
 
             {/* ── Dynu activity log ── */}
-            <div className="glass-card p-5 space-y-3">
+            <div className="dynu-log-card glass-card p-5 space-y-3">
                 <div className="flex items-center justify-between">
                     <button className="flex items-center gap-2 text-left" onClick={() => setLogsOpen(o => !o)}>
                         <svg className={`transition-transform ${logsOpen ? 'rotate-90' : ''}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6" /></svg>
@@ -1068,7 +1068,7 @@ const DynuDomains: React.FC = () => {
             </div>
 
             {/* ── Dynu Domain Manager ── */}
-            <div className="glass-card p-5 space-y-4">
+            <div className="dynu-manager-card glass-card p-5 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                         <h3 className="font-black text-xs uppercase tracking-widest text-[var(--text-muted)]">Dynu Domain Manager</h3>
