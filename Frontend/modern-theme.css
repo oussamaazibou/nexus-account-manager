@@ -839,3 +839,104 @@ tr:hover td { background:#faf9f6; }
   .workspace-page > div:first-child:not(.fixed)::after { width:150px; height:150px; right:-55px; top:-55px; border-width:26px; }
   .workspace-page .grid-cols-3,.workspace-page .grid-cols-4 { grid-template-columns:1fr 1fr!important; }
 }
+
+
+/* ── Dynu Domains — operational workbench ──────────────────────────────── */
+.dynu-page { display:block; }
+.dynu-page > .dynu-hero {
+  min-height:210px!important; padding:34px 36px!important; display:flex!important;
+  flex-direction:column!important; align-items:flex-start!important; justify-content:flex-end!important;
+  background:#3157d5!important; border-radius:14px!important;
+}
+.dynu-page > .dynu-hero::before {
+  content:"DNS"; position:absolute; right:24px; bottom:-26px; z-index:0;
+  color:rgba(255,255,255,.07); font-size:118px; font-weight:950; letter-spacing:-.08em;
+}
+.dynu-page > .dynu-hero::after {
+  right:70px!important; top:-125px!important; width:310px!important; height:310px!important;
+  border:50px solid #ffda58!important;
+}
+.dynu-page > .dynu-hero h2 { max-width:720px; font-size:clamp(36px,5vw,64px)!important; line-height:.95; text-transform:none!important; }
+.dynu-page > .dynu-hero p { max-width:620px; color:#d4dcfa!important; font-size:13px!important; }
+
+.dynu-metrics {
+  margin-top:-58px; padding:0 22px; position:relative; z-index:3;
+  display:grid!important; grid-template-columns:repeat(4,minmax(0,1fr))!important; gap:10px!important;
+}
+.dynu-metrics .glass-card {
+  min-height:112px; padding:17px 18px!important; display:flex; flex-direction:column;
+  justify-content:flex-end; background:#fff!important; border:1px solid #d8d6cf!important;
+  border-radius:10px!important; box-shadow:0 12px 30px rgba(17,24,39,.09)!important;
+}
+.dynu-metrics .glass-card > div:first-child { font-size:28px!important; line-height:1; }
+.dynu-metrics .glass-card:nth-child(1) { border-top:4px solid #0891b2!important; }
+.dynu-metrics .glass-card:nth-child(2) { border-top:4px solid #3157d5!important; }
+.dynu-metrics .glass-card:nth-child(3) { border-top:4px solid #168765!important; }
+.dynu-metrics .glass-card:nth-child(4) { border-top:4px solid #e66b2f!important; }
+
+.dynu-workbench { display:grid!important; grid-template-columns:minmax(360px,.78fr) minmax(0,1.45fr)!important; gap:20px!important; align-items:start; }
+.dynu-command-rail { grid-column:auto!important; display:grid; gap:14px!important; }
+.dynu-command-rail > .glass-card {
+  padding:0!important; overflow:hidden; background:#fff!important; border:1px solid #d8d6cf!important;
+  border-radius:11px!important;
+}
+.dynu-command-rail > .glass-card > h3,
+.dynu-command-rail > .glass-card > div:first-child {
+  min-height:54px; margin:0!important; padding:15px 18px!important; display:flex; align-items:center;
+  background:#f4f3ef!important; border-bottom:1px solid #e0ded7!important;
+}
+.dynu-command-rail > .glass-card > h3 { color:#111827!important; }
+.dynu-command-rail > .glass-card > *:not(h3):not(:first-child) { margin-left:18px; margin-right:18px; }
+.dynu-command-rail > .glass-card > *:last-child { margin-bottom:18px; }
+.dynu-command-rail textarea { min-height:108px; }
+.dynu-command-rail button.w-full { min-height:42px; font-weight:800; }
+.dynu-command-rail .grid-cols-2.p-1 { padding:4px!important; background:#eeece7!important; border-color:#d8d6cf!important; }
+.dynu-command-rail .grid-cols-2.p-1 button { color:#6d717b; }
+.dynu-command-rail .grid-cols-2.p-1 button.bg-indigo-600 { color:#fff!important; background:#3157d5!important; }
+
+.dynu-results-pane { grid-column:auto!important; position:sticky; top:0; }
+.dynu-results-pane > .glass-card {
+  min-height:560px; padding:0!important; overflow:hidden; background:#fff!important;
+  border:1px solid #d8d6cf!important; border-radius:11px!important;
+}
+.dynu-results-pane > .glass-card > div:first-child {
+  min-height:70px; padding:18px 20px; background:#111827; border-bottom:0;
+}
+.dynu-results-pane > .glass-card > div:first-child h3 { color:#fff!important; }
+.dynu-results-pane > .glass-card > div:not(:first-child) { margin-left:18px; margin-right:18px; }
+.dynu-results-pane > .glass-card > div:last-child { margin-bottom:18px; }
+.dynu-results-pane .space-y-2 > div {
+  padding:14px!important; background:#f8f7f3!important; border-color:#e1dfd8!important; border-radius:8px!important;
+}
+.dynu-results-pane .w-8.h-8 { border-radius:8px!important; }
+.dynu-results-pane .font-mono { color:#1f2937!important; }
+
+.dynu-log-card,.dynu-manager-card {
+  padding:0!important; overflow:hidden; background:#fff!important;
+  border:1px solid #d8d6cf!important; border-radius:11px!important;
+}
+.dynu-log-card > div:first-child,.dynu-manager-card > div:first-child {
+  min-height:66px; padding:16px 20px; background:#f4f3ef;
+  border-bottom:1px solid #dfddd6;
+}
+.dynu-log-card > div:not(:first-child),.dynu-manager-card > *:not(:first-child) { margin:16px 20px 20px; }
+.dynu-log-card .h-56 { height:260px; color:#cbd5e1; background:#111827!important; border-color:#111827!important; }
+.dynu-log-card .h-56 [class*="text-white"] { color:#6b7280!important; }
+
+.dynu-manager-card > div:first-child h3 { color:#111827!important; font-size:13px; }
+.dynu-manager-card > .space-y-2 > div { background:#f8f7f3!important; border-color:#dfddd6!important; }
+.dynu-manager-card .border-t { border-color:#dfddd6!important; }
+.dynu-manager-card .border-t > .rounded-xl { background:#fff!important; border:1px solid #dfddd6!important; }
+
+@media (max-width:1100px) {
+  .dynu-workbench { grid-template-columns:1fr!important; }
+  .dynu-results-pane { position:relative; }
+  .dynu-command-rail { grid-template-columns:1fr 1fr; align-items:start; }
+  .dynu-command-rail > .glass-card:first-child { grid-column:1 / -1; }
+}
+@media (max-width:760px) {
+  .dynu-page > .dynu-hero { min-height:250px!important; padding:26px!important; }
+  .dynu-metrics { margin-top:-34px; padding:0 12px; grid-template-columns:1fr 1fr!important; }
+  .dynu-workbench,.dynu-command-rail { grid-template-columns:1fr!important; }
+  .dynu-results-pane > .glass-card { min-height:420px; }
+}
