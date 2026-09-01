@@ -987,3 +987,41 @@ tr:hover td { background:#faf9f6; }
 @media (max-width:500px) {
   .results-toolbar { grid-template-columns:1fr; }
 }
+
+
+/* ── Result Accounts — centered multi-selection command bar ─────────────── */
+.results-selection-wrap {
+  left:50%!important; right:auto!important; bottom:22px!important;
+  width:min(1380px,calc(100vw - 40px))!important; max-width:none!important;
+  transform:translateX(-50%)!important;
+}
+.results-selection-bar {
+  width:100%; min-height:64px; padding:10px 16px!important;
+  display:flex!important; align-items:center!important; justify-content:center!important;
+  flex-wrap:wrap!important; gap:10px!important;
+  color:#fff!important; background:#111827!important;
+  border:1px solid rgba(255,255,255,.14)!important; border-radius:12px!important;
+  box-shadow:0 16px 42px rgba(17,24,39,.28)!important;
+}
+.results-selection-count {
+  padding:8px 11px; color:#fff!important; background:rgba(255,255,255,.11);
+  border:1px solid rgba(255,255,255,.12); border-radius:6px;
+}
+.result-accounts-page .results-selection-bar [class*="text-white"],
+.result-accounts-page .results-selection-count { color:#fff!important; }
+.results-selection-bar > .h-6 { background:rgba(255,255,255,.18)!important; }
+.results-selection-bar input,.results-selection-bar select {
+  min-height:38px; color:#111827!important; background:#fff!important;
+  border-color:#d8d6cf!important; border-radius:6px!important;
+}
+.results-selection-bar button { min-height:38px; border-radius:6px!important; }
+@media (max-width:900px) {
+  .results-selection-wrap { bottom:12px!important; width:calc(100vw - 20px)!important; }
+  .results-selection-bar { justify-content:flex-start!important; max-height:42vh; overflow-y:auto; }
+}
+@media (max-width:560px) {
+  .results-selection-bar { display:grid!important; grid-template-columns:1fr 1fr; }
+  .results-selection-bar > * { width:100%; justify-content:center; }
+  .results-selection-bar > .h-6 { display:none; }
+  .results-selection-count { grid-column:1 / -1; text-align:center; }
+}
