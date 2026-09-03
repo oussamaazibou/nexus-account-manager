@@ -1132,3 +1132,11 @@ body .workspace-page.result-accounts-page span.results-selection-count {
 .nav-item {
   text-decoration: none;
 }
+
+
+/* Readable JSON viewer */
+.workspace-page .upload-json-content,
+body .workspace-page pre.upload-json-content {
+  color:#111827!important;
+  -webkit-text-fill-color:#111827!important;
+}
