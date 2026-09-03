@@ -396,7 +396,7 @@ const UploadJSON: React.FC = () => {
                 <div className="flex items-center justify-between border-b border-white/10 pb-4">
                     <div>
                         <h3 className="font-black">2b. Find Local JSON → Push &amp; Replace in S3</h3>
-                        <p className="text-xs text-[var(--text-muted)] mt-1">Scan the server for locally saved service-account JSONs (<code className="text-emerald-300">&lt;domain&gt;.json</code>) and upload each one, overwriting the old key for that account in S3.</p>
+                        <p className="text-xs text-[var(--text-muted)] mt-1">Scan the server for locally saved service-account JSONs (<code className="upload-json-dark-label">&lt;domain&gt;.json</code>) and upload each one, overwriting the old key for that account in S3.</p>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                         <div className="w-10 h-10 rounded-xl bg-cyan-600/20 text-cyan-400 flex items-center justify-center">
@@ -449,7 +449,7 @@ const UploadJSON: React.FC = () => {
                             ) : (
                                 <div className="space-y-2">
                                     <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-emerald-400 font-bold">✅ Found local JSON:</span>
+                                        <span className="upload-json-dark-label font-bold">✅ Found local JSON:</span>
                                         <span className="font-mono text-[var(--text-main)]">{localSearchResult.filename}</span>
                                         <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-white/10 text-[var(--text-muted)] uppercase">
                                             {localSearchResult.location === 'cache' ? '🔁 cached (tmp/manage-keys)' : 'project root'}
