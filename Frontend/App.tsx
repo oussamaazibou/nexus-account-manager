@@ -57,12 +57,28 @@ const Ico = {
 };
 
 // ── NavItem ───────────────────────────────────────────────────────────────────
+const NAV_HREFS: Record<string, string> = {
+  'Dashboard': '/', 'List Accounts': '/list-accounts', 'Live Monitor': '/live-monitor',
+  'Result Accounts': '/result-accounts', 'Archive Accounts': '/archive-accounts',
+  'Verify Phone': '/verifyphone', 'Account Manager': '/account-manager',
+  'App Passwords': '/app-passwords', 'Upload JSON': '/upload-json',
+  'Create Users': '/create-users', 'Domains': '/domains', 'Dynu Domains': '/dynu-domains',
+  'App Users': '/app-users', 'Online Sessions': '/online-sessions',
+  'Manual OTP Keys': '/manual-otp', 'Settings': '/settings'
+};
+
 const NavItem: React.FC<{
   active: boolean; onClick: () => void; icon: React.ReactNode;
   label: string; badge?: number; mini?: boolean;
 }> = ({ active, onClick, icon, label, badge, mini }) => (
-  <button
-    onClick={onClick}
+  <a
+    href={NAV_HREFS[label] || '/'}
+    onClick={(event) => {
+      if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        onClick();
+      }
+    }}
     title={mini ? label : ''}
     className={`nav-item ${active ? 'active' : ''}`}
     style={{ justifyContent: mini ? 'center' : undefined }}
@@ -74,7 +90,7 @@ const NavItem: React.FC<{
     {mini && badge !== undefined && badge > 0 && (
       <span style={{ position: 'absolute', top: 6, right: 6, width: 6, height: 6, background: 'var(--blue)', borderRadius: '50%' }} />
     )}
-  </button>
+  </a>
 );
 
 const VIEW_PATHS: Record<string, string> = {
