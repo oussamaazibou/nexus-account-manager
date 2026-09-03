@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Account, AccountStatus } from '../types';
 import { Icons } from '../constants';
 
@@ -139,11 +139,32 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
     return filteredAccounts.slice(start, start + itemsPerPage);
   }, [filteredAccounts, currentPage, itemsPerPage]);
 
-  const toggleSelect = (id: string) => {
-    const next = new Set(selectedIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelectedIds(next);
+  const lastSelectedIdRef = useRef<string | null>(null);
+
+  const toggleSelect = (id: string, shiftKey = false) => {
+    setSelectedIds(previous => {
+      const next = new Set(previous);
+      const anchorId = lastSelectedIdRef.current;
+      const anchorIndex = anchorId ? paginatedAccounts.findIndex(account => account.id === anchorId) : -1;
+      const currentIndex = paginatedAccounts.findIndex(account => account.id === id);
+
+      if (shiftKey && anchorIndex !== -1 && currentIndex !== -1) {
+        const shouldSelect = !previous.has(id);
+        const start = Math.min(anchorIndex, currentIndex);
+        const end = Math.max(anchorIndex, currentIndex);
+        paginatedAccounts.slice(start, end + 1).forEach(account => {
+          if (shouldSelect) next.add(account.id);
+          else next.delete(account.id);
+        });
+      } else if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+
+      return next;
+    });
+    lastSelectedIdRef.current = id;
   };
 
   const toggleSelectAll = () => {
@@ -995,7 +1016,8 @@ const ValidAccounts: React.FC<ValidAccountsProps> = ({
                       <input
                         type="checkbox"
                         checked={selectedIds.has(acc.id)}
-                        onChange={() => toggleSelect(acc.id)}
+                        onChange={(event) => toggleSelect(acc.id, (event.nativeEvent as MouseEvent).shiftKey)}
+                        aria-label={`Select ${acc.email}. Hold Shift to select a range.`}
                         className="w-5 h-5 rounded border-theme-glass bg-theme-surface text-indigo-600 cursor-pointer"
                       />
                     </td>
