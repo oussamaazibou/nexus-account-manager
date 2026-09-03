@@ -1111,3 +1111,24 @@ tr:hover td { background:#faf9f6; }
   .result-accounts-page .results-accounts-table th:nth-child(3),
   .result-accounts-page .results-accounts-table td:nth-child(3) { display: none; }
 }
+
+
+/* Accessibility and native-link navigation refinements */
+body .workspace-page.result-accounts-page span.results-selection-count {
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+}
+
+.upload-json-dark-label {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+
+.result-account-checkbox:focus-visible {
+  outline: 3px solid rgba(49, 87, 213, .38) !important;
+  outline-offset: 3px;
+}
+
+.nav-item {
+  text-decoration: none;
+}
