@@ -564,7 +564,7 @@ const UploadJSON: React.FC = () => {
                             Loading JSON from S3...
                         </div>
                     ) : fetchedJson ? (
-                        <pre className="w-full overflow-auto rounded-xl bg-black/40 border border-white/5 p-5 text-xs font-mono text-emerald-300 leading-relaxed" style={{ maxHeight: 420 }}>
+                        <pre className="upload-json-content w-full overflow-auto rounded-xl bg-black/40 border border-white/5 p-5 text-xs font-mono leading-relaxed" style={{ maxHeight: 420 }}>
                             {fetchedJson}
                         </pre>
                     ) : null}
