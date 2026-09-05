@@ -3,33 +3,42 @@ import fs from 'fs';
 import { Logger } from '../../utils/logger.js';
 
 export class S3Uploader {
-    private client: S3Client;
-    private readBucket: string;
-    private writeBucket: string;
-
-    constructor() {
-        this.client = new S3Client({
-            region: process.env.AWS_REGION || 'us-east-1',
-            credentials: {
-                accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || ''
+    private getRuntimeS3() {
+        let config: any = {};
+        try {
+            const configPath = `${process.cwd()}/config.json`;
+            if (fs.existsSync(configPath)) {
+                config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
             }
+        } catch (error: any) {
+            Logger.warn(`Failed to reload S3 config: ${error.message}`);
+        }
+
+        const accessKeyId = config.awsAccessKey || process.env.AWS_ACCESS_KEY_ID || '';
+        const secretAccessKey = config.awsSecretKey || process.env.AWS_SECRET_ACCESS_KEY || '';
+        const region = config.awsRegion || process.env.AWS_REGION || 'us-east-1';
+        const readBucket = config.awsBucket || process.env.AWS_BUCKET_NAME || 'dev-app-passwords';
+        const writeBucket = config.awsWriteBucket || config.awsBucket || process.env.AWS_WRITE_BUCKET || readBucket;
+
+        const client = new S3Client({
+            region,
+            credentials: { accessKeyId, secretAccessKey }
         });
 
-        this.readBucket = process.env.AWS_BUCKET_NAME || 'dev-app-passwords';
-        this.writeBucket = process.env.AWS_WRITE_BUCKET || 'python-json77';
+        return { client, accessKeyId, secretAccessKey, readBucket, writeBucket };
     }
 
     async downloadJson(key: string): Promise<any> {
-        if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+        const { client, accessKeyId, secretAccessKey, readBucket, writeBucket } = this.getRuntimeS3();
+        if (!accessKeyId || !secretAccessKey) {
             Logger.info(`S3 Credentials not configured. Skipping download: ${key}`);
             return null;
         }
         // Try write bucket first, fallback to read bucket
-        for (const bucket of [this.writeBucket, this.readBucket]) {
+        for (const bucket of [...new Set([writeBucket, readBucket])]) {
             try {
                 const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-                const response = await this.client.send(command);
+                const response = await client.send(command);
                 const chunks: Buffer[] = [];
                 for await (const chunk of response.Body as any) chunks.push(Buffer.from(chunk));
                 return JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -44,7 +53,8 @@ export class S3Uploader {
 
     async uploadFile(key: string, filePath: string): Promise<string> {
         try {
-            if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+            const { client, accessKeyId, secretAccessKey, writeBucket } = this.getRuntimeS3();
+            if (!accessKeyId || !secretAccessKey) {
                 Logger.info(`S3 Credentials not configured. Skipping upload for: ${key}`);
                 return `local://${filePath}`;
             }
@@ -52,14 +62,14 @@ export class S3Uploader {
             const fileStream = fs.createReadStream(filePath);
 
             const command = new PutObjectCommand({
-                Bucket: this.writeBucket,
+                Bucket: writeBucket,
                 Key: key,
                 Body: fileStream
             });
 
-            await this.client.send(command);
+            await client.send(command);
             Logger.info(`Upload successfully: ${key}`);
-            return `s3://${this.writeBucket}/${key}`;
+            return `s3://${writeBucket}/${key}`;
 
         } catch (error: any) {
             Logger.error(`S3 Upload Failed`, error);
