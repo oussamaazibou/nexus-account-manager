@@ -614,8 +614,38 @@ app.get('/api/settings', (req, res) => {
 app.post('/api/settings', (req, res) => {
     try {
         const configPath = path.join(__dirname, 'config.json');
-        fs.writeFileSync(configPath, JSON.stringify(req.body, null, 2));
-        res.json({ success: true });
+        let existingConfig = {};
+
+        if (fs.existsSync(configPath)) {
+            existingConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        }
+
+        // Preserve settings that are not part of this update. When the main S3
+        // bucket changes, use it for writes too unless an explicit write bucket
+        // was submitted.
+        const incoming = { ...req.body };
+        if (Object.prototype.hasOwnProperty.call(incoming, 'awsBucket') &&
+            !Object.prototype.hasOwnProperty.call(incoming, 'awsWriteBucket')) {
+            incoming.awsWriteBucket = incoming.awsBucket;
+        }
+
+        const newConfig = { ...existingConfig, ...incoming };
+        const tempPath = `${configPath}.tmp`;
+        fs.writeFileSync(tempPath, JSON.stringify(newConfig, null, 2), 'utf8');
+        fs.renameSync(tempPath, configPath);
+
+        // Apply new AWS/S3 credentials to the running process immediately.
+        loadConfigToEnv();
+
+        res.json({
+            success: true,
+            message: 'Settings saved and applied immediately',
+            s3: {
+                region: process.env.AWS_REGION || '',
+                bucket: process.env.AWS_BUCKET_NAME || '',
+                writeBucket: process.env.AWS_WRITE_BUCKET || ''
+            }
+        });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -2515,7 +2545,7 @@ async function getAdminClient(keyFilePath, scopes) {
 
 // ── S3 Bucket Helpers ──
 const S3_READ_BUCKET = () => process.env.AWS_BUCKET_NAME || 'dev-app-passwords';
-const S3_WRITE_BUCKET = () => process.env.AWS_WRITE_BUCKET || 'python-json77';
+const S3_WRITE_BUCKET = () => process.env.AWS_WRITE_BUCKET || process.env.AWS_BUCKET_NAME || 'python-json77';
 
 // ── S3 Key Fetch Helper (tries write bucket first, falls back to read bucket) ──
 async function getKeyData(adminEmail) {
