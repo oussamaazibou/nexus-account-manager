@@ -42,62 +42,104 @@ async function addDomainWideDelegation(email, password, serviceAccountEmail, bro
         });
         await page.setViewport({ width: 1280, height: 800 });
 
-        // 1. Check if we are already logged in (Shared Browser Scenario)
-        // If the browser was passed, we assume the previous step might have left us logged in
-        // But we need to navigate to the Admin Console DWD page anyway.
-
+        // 1. Open DWD and complete whatever Google sign-in state is shown.
+        // Do not assume a missing email field means that authentication succeeded:
+        // Google may still be loading, showing an account chooser, password, OTP,
+        // CAPTCHA, or another intermediate challenge.
+        const initialDwdUrl = 'https://admin.google.com/ac/owl/domainwidedelegation?hl=en';
         console.log('[DWD] Navigating to DWD Page...');
-        await page.goto('https://admin.google.com/ac/owl/domainwidedelegation?hl=en', { waitUntil: 'networkidle2' });
+        await page.goto(initialDwdUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-        // Check if login is required
-        try {
-            const emailInput = await page.waitForSelector('input[type="email"], input[name="identifier"], #identifierId', { visible: true, timeout: 5000 }).catch(() => null);
+        const { solveGoogleLoginCaptchaIfPresent } = require('./captchaSolver.cjs');
+        const { handleOTPIfRequested } = require('./autoOTPHandler.cjs');
 
-            if (emailInput) {
-                console.log('[DWD] Login required. Entering credentials...');
-                // Enter email
-                await emailInput.click({ clickCount: 3 });
-                await emailInput.type(email, { delay: 60 });
-                console.log('[DWD] Email typed.');
-                await page.click('#identifierNext').catch(() => page.keyboard.press('Enter'));
+        for (let loginStep = 1; loginStep <= 10; loginStep++) {
+            await new Promise(r => setTimeout(r, loginStep === 1 ? 4000 : 2500));
+            const loginUrl = page.url();
 
-                await new Promise(r => setTimeout(r, 2000));
-
-                // Optional Captcha after email
-                const { solveGoogleLoginCaptchaIfPresent } = require('./captchaSolver.cjs');
-                await solveGoogleLoginCaptchaIfPresent(page, password);
-
-                // Enter password
-                const passwordInput = await page.waitForSelector('input[type="password"]', { visible: true, timeout: 15000 });
-                await new Promise(r => setTimeout(r, 1000));
-
-                await passwordInput.click({ clickCount: 3 });
-                await passwordInput.type(password, { delay: 60 });
-                console.log('[DWD] Password typed.');
-                await page.click('#passwordNext').catch(() => page.keyboard.press('Enter'));
-
-                await new Promise(r => setTimeout(r, 3000));
-
-                // Watch for captcha after password or "Wrong password"
-                let solvedCaptcha = await solveGoogleLoginCaptchaIfPresent(page, password);
-                if (solvedCaptcha) {
-                    await new Promise(r => setTimeout(r, 4000)); // wait for submit
-                }
-
-                // AUTO-OTP: Check if OTP is requested and handle automatically
-                console.log('[DWD] Checking for OTP request...');
-                const { handleOTPIfRequested } = require('./autoOTPHandler.cjs');
-                await new Promise(r => setTimeout(r, 3000)); // Wait for page to load
-                await handleOTPIfRequested(page, email, 10000);
-
-                // Wait for Admin Console to load
-                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
-                console.log('[DWD] Logged in successfully');
-            } else {
-                console.log('[DWD] Already logged in (or email input not found). Continuing...');
+            if (!loginUrl.includes('accounts.google.com')) {
+                console.log('[DWD] Google sign-in complete.');
+                break;
             }
-        } catch (e) {
-            console.log('[DWD] Login check failed or skipped:', e.message);
+
+            console.log(`[DWD] Login state ${loginStep}/10: ${loginUrl}`);
+
+            // Google may show an account chooser instead of the identifier form.
+            const chooserClicked = await page.evaluate(targetEmail => {
+                const nodes = Array.from(document.querySelectorAll('[data-identifier], [data-email], [role="link"], [role="button"]'));
+                const target = String(targetEmail).toLowerCase();
+                const item = nodes.find(node => {
+                    if (node.offsetParent === null) return false;
+                    const identifier = String(node.getAttribute('data-identifier') || node.getAttribute('data-email') || '').toLowerCase();
+                    const text = String(node.innerText || node.textContent || '').toLowerCase();
+                    return identifier === target || text.includes(target);
+                });
+                if (!item) return false;
+                item.click();
+                return true;
+            }, email);
+
+            if (chooserClicked) {
+                console.log('[DWD] Selected account from Google account chooser.');
+                continue;
+            }
+
+            const emailInput = await page.$('input[type="email"], input[name="identifier"], #identifierId');
+            if (emailInput && await emailInput.isIntersectingViewport().catch(() => true)) {
+                await emailInput.click({ clickCount: 3 });
+                await page.keyboard.press('Backspace');
+                await emailInput.type(email, { delay: 45 });
+                console.log('[DWD] Email entered.');
+                const nextClicked = await page.evaluate(() => {
+                    const button = document.querySelector('#identifierNext, button[jsname="LgbsSe"]');
+                    if (!button) return false;
+                    button.click();
+                    return true;
+                });
+                if (!nextClicked) await page.keyboard.press('Enter');
+                continue;
+            }
+
+            const passwordInput = await page.$('input[type="password"]');
+            if (passwordInput && await passwordInput.isIntersectingViewport().catch(() => true)) {
+                await passwordInput.click({ clickCount: 3 });
+                await page.keyboard.press('Backspace');
+                await passwordInput.type(password, { delay: 45 });
+                console.log('[DWD] Password entered.');
+                const nextClicked = await page.evaluate(() => {
+                    const button = document.querySelector('#passwordNext, button[jsname="LgbsSe"]');
+                    if (!button) return false;
+                    button.click();
+                    return true;
+                });
+                if (!nextClicked) await page.keyboard.press('Enter');
+                await new Promise(r => setTimeout(r, 3000));
+                await solveGoogleLoginCaptchaIfPresent(page, password).catch(error =>
+                    console.log('[DWD] CAPTCHA handler:', error.message)
+                );
+                await handleOTPIfRequested(page, email, 12000).catch(error =>
+                    console.log('[DWD] OTP handler:', error.message)
+                );
+                continue;
+            }
+
+            // No standard field is visible: let the existing challenge handlers
+            // inspect CAPTCHA/OTP pages before the next state check.
+            const captchaHandled = await solveGoogleLoginCaptchaIfPresent(page, password).catch(() => false);
+            const otpHandled = await handleOTPIfRequested(page, email, 10000).catch(() => false);
+            if (!captchaHandled && !otpHandled) {
+                console.log('[DWD] Waiting for Google sign-in page to finish rendering...');
+            }
+        }
+
+        if (page.url().includes('accounts.google.com')) {
+            const state = await page.evaluate(() => ({
+                url: window.location.href,
+                title: document.title,
+                body: (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 600)
+            }));
+            console.log('[DWD] Login blocked state:', JSON.stringify(state));
+            throw new Error(`Google login/verification did not finish after 10 checks: ${state.url}`);
         }
 
         // 2. Navigate to Domain-Wide Delegation (if not already there)
