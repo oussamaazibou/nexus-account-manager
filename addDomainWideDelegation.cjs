@@ -108,28 +108,74 @@ async function addDomainWideDelegation(email, password, serviceAccountEmail, bro
 
         await new Promise(resolve => setTimeout(resolve, 3000));
 
-        // 3. Click "Add new" button
+        // 3. Click "Add new" button. Google Admin is a heavy SPA, so the
+        // control can appear late or after an internal redirect.
         console.log('[DWD] Adding new client...');
 
-        // More robust button finding
-        const addButton = await page.evaluate(() => {
-            const buttons = Array.from(document.querySelectorAll('button, span[role="button"], div[role="button"]'));
-            const addBtn = buttons.find(btn => {
-                const text = btn.innerText || btn.textContent || '';
-                const ariaLabel = btn.getAttribute('aria-label') || '';
-                return text.toLowerCase().includes('add new') ||
-                    ariaLabel.toLowerCase().includes('add new') ||
-                    text.toLowerCase().includes('add') && text.length < 15;
-            });
-            if (addBtn) {
-                addBtn.click();
-                return true;
+        const dwdUrl = 'https://admin.google.com/ac/owl/domainwidedelegation?hl=en';
+        let addButton = false;
+        let lastPageState = {};
+
+        for (let attempt = 1; attempt <= 3 && !addButton; attempt++) {
+            if (!page.url().includes('domainwidedelegation')) {
+                console.log(`[DWD] Add New attempt ${attempt}: returning to DWD page...`);
+                await page.goto(dwdUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
             }
-            return false;
-        });
+
+            await new Promise(resolve => setTimeout(resolve, attempt === 1 ? 5000 : 8000));
+
+            lastPageState = await page.evaluate(() => ({
+                url: window.location.href,
+                title: document.title,
+                body: (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 500)
+            }));
+
+            const currentPageUrl = String(lastPageState.url || page.url());
+            if (currentPageUrl.includes('accounts.google.com')) {
+                throw new Error(`Google login/verification is still blocking the DWD page: ${currentPageUrl}`);
+            }
+
+            addButton = await page.evaluate(() => {
+                const candidates = Array.from(document.querySelectorAll(
+                    'button, [role="button"], a, [data-action], [aria-label]'
+                ));
+
+                const normalize = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                const labels = ['add new', 'add client', 'new client', 'add app'];
+
+                const button = candidates.find(element => {
+                    if (element.offsetParent === null) return false;
+                    if (element.disabled || element.getAttribute('aria-disabled') === 'true') return false;
+
+                    const text = normalize(element.innerText || element.textContent);
+                    const aria = normalize(element.getAttribute('aria-label'));
+                    const tooltip = normalize(element.getAttribute('data-tooltip'));
+                    return labels.some(label =>
+                        text === label || aria.includes(label) || tooltip.includes(label)
+                    );
+                });
+
+                if (!button) return false;
+                button.scrollIntoView({ block: 'center' });
+                button.click();
+                return true;
+            });
+
+            if (!addButton && attempt < 3) {
+                console.log(`[DWD] Add New not visible (attempt ${attempt}/3). Reloading DWD page...`);
+                await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+            }
+        }
 
         if (!addButton) {
-            throw new Error('Could not find "Add new" button');
+            console.log('[DWD] Page state:', JSON.stringify(lastPageState));
+            const pageText = String(lastPageState.body || '').toLowerCase();
+            if (pageText.includes('you do not have permission') ||
+                pageText.includes('access denied') ||
+                pageText.includes('not authorized')) {
+                throw new Error('DWD page opened, but this account does not have Super Admin permission');
+            }
+            throw new Error(`Could not find "Add new" button after 3 attempts. URL: ${lastPageState.url || page.url()}; title: ${lastPageState.title || 'unknown'}`);
         }
 
         console.log('[DWD] Clicked Add New button');
